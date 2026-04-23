@@ -20,7 +20,10 @@ pub struct Materialised {
 }
 
 pub fn materialise(profile: &mut Profile) -> Result<Option<Materialised>> {
-    if profile.mocks.files.is_empty() {
+    let synth_resolv = crate::net_files::resolv_conf(&profile.network);
+    let synth_hosts = crate::net_files::hosts_extra(&profile.network);
+
+    if profile.mocks.files.is_empty() && synth_resolv.is_none() && synth_hosts.is_none() {
         return Ok(None);
     }
 
@@ -46,6 +49,12 @@ pub fn materialise(profile: &mut Profile) -> Result<Option<Materialised>> {
         let path = dir.join(name);
         std::fs::write(&path, content)
             .with_context(|| format!("writing mock {}", path.display()))?;
+    }
+    if let Some(rc) = &synth_resolv {
+        std::fs::write(dir.join("resolv.conf"), rc).context("writing synth resolv.conf")?;
+    }
+    if let Some(hs) = &synth_hosts {
+        std::fs::write(dir.join("hosts"), hs).context("writing synth hosts")?;
     }
 
     // Expose the tempdir to the sandboxed process AND make it readable by

@@ -30,6 +30,43 @@ pub struct Profile {
     pub limits: Limits,
     #[serde(default)]
     pub mocks: Mocks,
+
+    /// Simple cross-platform workspace — a persistent directory the sandbox
+    /// sees as read+write, can `chdir` into on start, and that the user may
+    /// pre-populate or inspect afterwards.
+    #[serde(default)]
+    pub workspace: Workspace,
+
+    /// Linux-only: true overlayfs (copy-on-write). `lower` is the read-only
+    /// base; writes land in `upper`; the merged view is mounted at `mount`.
+    /// Requires an unprivileged-userns-capable kernel (5.11+).
+    #[serde(default)]
+    pub overlay: Overlay,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Workspace {
+    /// Filesystem path for the workspace. Supports `~`, `${CWD}`, `${HOME}`
+    /// etc. Auto-created if missing. Automatically added to `filesystem.read_write`.
+    pub path: Option<String>,
+
+    /// If true, the sandbox's initial working directory is set to the
+    /// workspace path. `--cwd` on the CLI still wins.
+    #[serde(default)]
+    pub chdir: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Overlay {
+    /// Read-only lower layer (typically the real directory to present).
+    pub lower: Option<String>,
+    /// Persistent writable upper layer — where writes land.
+    pub upper: Option<String>,
+    /// Mount point inside the sandbox's view. Defaults to `lower`, so the
+    /// sandbox sees the merged union in place of the real directory.
+    pub mount: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -165,6 +202,37 @@ pub struct Network {
     /// and fail to start without this.
     #[serde(default)]
     pub allow_unix_sockets: bool,
+
+    /// DNS server override. On Linux the synthetic resolv.conf is bind-
+    /// mounted over `/etc/resolv.conf` in the sandbox's mount namespace,
+    /// so every resolver inside the sandbox uses these servers. On macOS
+    /// the synthetic file is materialised into `$SANDKASTEN_MOCKS/resolv.conf`
+    /// — transparent DNS swap there needs a DYLD interposer and is planned.
+    #[serde(default)]
+    pub dns: Dns,
+
+    /// Additional /etc/hosts entries visible to the sandbox. Keys are
+    /// hostnames, values are IPs. Applied via the same bind-mount
+    /// mechanism as `dns` on Linux; materialised to
+    /// `$SANDKASTEN_MOCKS/hosts` on macOS.
+    #[serde(default)]
+    pub hosts_entries: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dns {
+    /// Nameserver IPs, in order. Overrides host `/etc/resolv.conf` entirely.
+    #[serde(default)]
+    pub servers: Vec<String>,
+
+    /// Search domains.
+    #[serde(default)]
+    pub search: Vec<String>,
+
+    /// Verbatim `options` line values (e.g. `edns0`, `rotate`, `timeout:1`).
+    #[serde(default)]
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -300,6 +368,18 @@ impl Profile {
         for r in &mut self.filesystem.rules {
             r.path = ctx.expand(&r.path)?;
         }
+        if let Some(p) = self.workspace.path.as_deref() {
+            self.workspace.path = Some(ctx.expand(p)?);
+        }
+        if let Some(p) = self.overlay.lower.as_deref() {
+            self.overlay.lower = Some(ctx.expand(p)?);
+        }
+        if let Some(p) = self.overlay.upper.as_deref() {
+            self.overlay.upper = Some(ctx.expand(p)?);
+        }
+        if let Some(p) = self.overlay.mount.as_deref() {
+            self.overlay.mount = Some(ctx.expand(p)?);
+        }
         Ok(())
     }
 
@@ -386,6 +466,19 @@ impl Profile {
         out.network.allow_raw_sockets |= self.network.allow_raw_sockets;
         out.network.allow_unix_sockets |= self.network.allow_unix_sockets;
         extend(&mut out.network.extra_protocols, self.network.extra_protocols);
+        // DNS & hosts: child wins on any set value, otherwise inherit.
+        if !self.network.dns.servers.is_empty() {
+            out.network.dns.servers = self.network.dns.servers;
+        }
+        if !self.network.dns.search.is_empty() {
+            out.network.dns.search = self.network.dns.search;
+        }
+        if !self.network.dns.options.is_empty() {
+            out.network.dns.options = self.network.dns.options;
+        }
+        for (k, v) in self.network.hosts_entries {
+            out.network.hosts_entries.insert(k, v);
+        }
 
         // Process: allows are additive — either parent or child granting
         // the permission results in it being granted. Templates can only
@@ -409,6 +502,23 @@ impl Profile {
         // Mocks: child overrides parent on key collision.
         for (k, v) in self.mocks.files {
             out.mocks.files.insert(k, v);
+        }
+
+        // Workspace & overlay: child scalars win when set.
+        if self.workspace.path.is_some() {
+            out.workspace.path = self.workspace.path;
+        }
+        if self.workspace.chdir {
+            out.workspace.chdir = true;
+        }
+        if self.overlay.lower.is_some() {
+            out.overlay.lower = self.overlay.lower;
+        }
+        if self.overlay.upper.is_some() {
+            out.overlay.upper = self.overlay.upper;
+        }
+        if self.overlay.mount.is_some() {
+            out.overlay.mount = self.overlay.mount;
         }
 
         // Limits — child's scalar wins for each field. `min` semantics

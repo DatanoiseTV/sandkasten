@@ -23,6 +23,7 @@ mod limits;
 #[macro_use]
 mod log;
 mod mocks;
+mod net_files;
 mod signing;
 mod templates;
 mod ui;
@@ -86,6 +87,26 @@ fn run(args: cli::Cli) -> Result<i32> {
                 ));
             }
 
+            // Materialise [workspace]: create dir, add to rw, expose via env,
+            // optionally chdir.
+            let mut effective_cwd = cwd.clone();
+            if let Some(ws_path) = prof.workspace.path.clone() {
+                let ws = PathBuf::from(&ws_path);
+                std::fs::create_dir_all(&ws)
+                    .with_context(|| format!("creating workspace {}", ws.display()))?;
+                if !prof.filesystem.read_write.iter().any(|p| p == &ws_path) {
+                    prof.filesystem.read_write.push(ws_path.clone());
+                }
+                prof.env
+                    .set
+                    .insert("SANDKASTEN_WORKSPACE".to_string(), ws_path.clone());
+                if prof.workspace.chdir && effective_cwd.is_none() {
+                    effective_cwd = Some(ws.clone());
+                }
+                log::info(format_args!("workspace: {} (chdir={})",
+                    ws.display(), prof.workspace.chdir));
+            }
+
             log::info(format_args!(
                 "profile={:?} cwd={} target={}",
                 prof.name.as_deref().unwrap_or("?"),
@@ -93,7 +114,7 @@ fn run(args: cli::Cli) -> Result<i32> {
                 argv.first().map_or("?", String::as_str),
             ));
             log::print_summary(&prof);
-            let rc = run_sandboxed(&prof, cwd.as_deref(), &argv);
+            let rc = run_sandboxed(&prof, effective_cwd.as_deref(), &argv);
             if let Some(m) = mock_handle {
                 let _ = std::fs::remove_dir_all(&m.dir);
             }

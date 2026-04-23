@@ -159,6 +159,37 @@ files = { "config.json" = '{"api":"https://example/"}' }
 # Materialised to a private tempdir; the path lands in $SANDKASTEN_MOCKS
 # inside the sandbox. Transparent path-interposition (LD_PRELOAD /
 # bind-mount) is planned — until then, mock-aware apps consult the env var.
+
+# DNS / hosts rewrite — transparent on Linux (bind-mounts in the sandbox's
+# mount namespace over /etc/resolv.conf and /etc/hosts). On macOS the
+# synthesised files appear under $SANDKASTEN_MOCKS as resolv.conf and hosts;
+# transparent application needs the DYLD interposer, planned.
+[network.dns]
+servers = ["1.1.1.1", "9.9.9.9"]
+search  = ["example.com"]
+options = ["edns0", "rotate"]
+
+[network.hosts_entries]
+"api.example.com" = "127.0.0.1"
+"corp.internal"   = "10.0.0.42"
+
+# Persistent workspace: cross-platform. Directory is auto-created, added
+# to read_write, exposed to the sandbox as $SANDKASTEN_WORKSPACE, and
+# optionally set as the initial CWD. Pre-populate it or inspect it
+# yourself afterwards — writes persist there.
+[workspace]
+path  = "~/.sandkasten/work/${NAME}"
+chdir = true
+
+# True copy-on-write overlay (Linux only, kernel 5.11+).
+#   lower   = read-only base the sandbox sees through
+#   upper   = writes land here persistently; inspect at any time
+#   mount   = where the merged view is exposed (defaults to lower,
+#             so the overlay transparently replaces the real path)
+[overlay]
+lower = "/opt/myapp"
+upper = "~/.sandkasten/overlay/myapp"
+# mount = "/opt/myapp"   # default
 ```
 
 ### Path template variables
@@ -367,6 +398,10 @@ Shipping honestly so nobody gets surprised:
 - [x] Mock mode v1 (content sidecar via `$SANDKASTEN_MOCKS`)
 - [x] End-to-end sandbox smoke test on Linux CI
 - [x] Linux per-IP outbound via nftables inside the netns
+- [x] DNS server override + /etc/hosts pinning (transparent on Linux via
+      bind-mount; sidecar-exposed on macOS pending interposer)
+- [x] Persistent workspace directory (`[workspace]`) — cross-platform
+- [x] Linux overlayfs copy-on-write (`[overlay]`)
 - [ ] Bundled `pasta` / `slirp4netns` integration for turnkey outbound
 - [ ] Transparent mock interposition via LD_PRELOAD / DYLD_INSERT_LIBRARIES
 - [ ] Homebrew tap

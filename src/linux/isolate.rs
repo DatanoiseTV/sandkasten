@@ -100,6 +100,13 @@ fn child_main(
             .context("applying nftables rules")?;
     }
 
+    // DNS / hosts bind-mount overlays. Silent no-op if neither is configured.
+    // Runs inside our mount namespace so it doesn't affect the host.
+    bind_overlay_netfiles(profile).context("bind-mounting dns/hosts overlays")?;
+
+    // True copy-on-write overlayfs, if the profile asks for it.
+    apply_overlayfs(profile).context("setting up overlayfs")?;
+
     if let Some(c) = cwd {
         if unsafe { libc::chdir(c.as_ptr()) } != 0 {
             return Err(std::io::Error::last_os_error()).context("chdir");
@@ -178,6 +185,107 @@ fn no_new_privs() -> Result<()> {
     if rc != 0 {
         return Err(std::io::Error::last_os_error()).context("prctl");
     }
+    Ok(())
+}
+
+/// Bind-mount synth DNS and hosts files over `/etc/resolv.conf` and
+/// `/etc/hosts`, respectively. Reads content from our mock tempdir (which
+/// the main-thread materialiser wrote just before fork) via the
+/// `SANDKASTEN_MOCKS` env var. Inside the mount namespace, so the host's
+/// files are untouched.
+fn bind_overlay_netfiles(profile: &crate::config::Profile) -> Result<()> {
+    let needs_resolv = crate::net_files::resolv_conf(&profile.network).is_some();
+    let needs_hosts = crate::net_files::hosts_extra(&profile.network).is_some();
+    if !needs_resolv && !needs_hosts {
+        return Ok(());
+    }
+
+    let mock_dir = std::env::var_os("SANDKASTEN_MOCKS")
+        .ok_or_else(|| anyhow!("SANDKASTEN_MOCKS unset — mocks::materialise didn't run"))?;
+    let mock_dir = std::path::PathBuf::from(mock_dir);
+
+    if needs_resolv {
+        let src = mock_dir.join("resolv.conf");
+        bind_over(&src, std::path::Path::new("/etc/resolv.conf"))
+            .context("bind-mount /etc/resolv.conf")?;
+    }
+    if needs_hosts {
+        let src = mock_dir.join("hosts");
+        bind_over(&src, std::path::Path::new("/etc/hosts"))
+            .context("bind-mount /etc/hosts")?;
+    }
+    Ok(())
+}
+
+fn bind_over(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    use nix::mount::{mount, MsFlags};
+    // Read-only bind: mount(src, dst, MS_BIND), then remount with MS_REMOUNT|MS_RDONLY.
+    mount(
+        Some(src),
+        dst,
+        Option::<&str>::None,
+        MsFlags::MS_BIND,
+        Option::<&str>::None,
+    )
+    .with_context(|| format!("bind-mount {} -> {}", src.display(), dst.display()))?;
+    mount(
+        Option::<&std::path::Path>::None,
+        dst,
+        Option::<&str>::None,
+        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+        Option::<&str>::None,
+    )
+    .with_context(|| format!("remount-ro {}", dst.display()))?;
+    Ok(())
+}
+
+/// Set up an overlayfs on top of `overlay.lower` so writes land in
+/// `overlay.upper` instead of the real filesystem. The merged view appears
+/// at `overlay.mount` (defaults to `overlay.lower`, i.e. an in-place
+/// replacement).
+///
+/// Requires Linux 5.11+ for unprivileged-userns overlayfs mounts.
+fn apply_overlayfs(profile: &crate::config::Profile) -> Result<()> {
+    let (Some(lower), Some(upper)) = (
+        profile.overlay.lower.as_ref(),
+        profile.overlay.upper.as_ref(),
+    ) else {
+        return Ok(());
+    };
+    let mount_at = profile
+        .overlay
+        .mount
+        .as_deref()
+        .unwrap_or(lower)
+        .to_string();
+
+    // Both upper and work must live on the same filesystem; we stash work/
+    // as a sibling of upper.
+    std::fs::create_dir_all(upper).with_context(|| format!("mkdir {upper}"))?;
+    let work = std::path::Path::new(upper)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join(format!(
+            ".sandkasten-ovl-work-{}",
+            std::process::id()
+        ));
+    std::fs::create_dir_all(&work)
+        .with_context(|| format!("mkdir {}", work.display()))?;
+
+    let opts = format!(
+        "lowerdir={lower},upperdir={upper},workdir={}",
+        work.display()
+    );
+
+    use nix::mount::{mount, MsFlags};
+    mount(
+        Some("overlay"),
+        std::path::Path::new(&mount_at),
+        Some("overlay"),
+        MsFlags::empty(),
+        Some(opts.as_str()),
+    )
+    .with_context(|| format!("overlayfs mount at {mount_at} ({opts})"))?;
     Ok(())
 }
 
