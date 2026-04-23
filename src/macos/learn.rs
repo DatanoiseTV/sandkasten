@@ -35,7 +35,9 @@ pub fn run(argv: &[String], cwd: Option<&Path>, opts: Options) -> Result<i32> {
         .filter_map(|(k, v)| std::ffi::CString::new(format!("{k}={v}")).ok())
         .collect();
 
-    let exit = super::run_with_sbpl(&policy, argv, cwd, envp)?;
+    // Learn mode runs the target with full permissions to capture its
+    // operations — no resource limits either.
+    let exit = super::run_with_sbpl(&policy, argv, cwd, envp, &crate::config::Limits::default())?;
     eprintln!("\nsandkasten: target exited with code {exit}");
 
     let ops = parse_trace(&trace_path)

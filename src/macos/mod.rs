@@ -66,7 +66,7 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
     }
     crate::log::info(format_args!("applying sandbox ({} bytes SBPL)", policy.len()));
     let envp = build_envp(&profile.env)?;
-    run_with_sbpl(&policy, argv, cwd, envp)
+    run_with_sbpl(&policy, argv, cwd, envp, &profile.limits)
 }
 
 /// Lower-level entry: fork, apply the given SBPL in the child, exec argv with
@@ -76,6 +76,7 @@ pub fn run_with_sbpl(
     argv: &[String],
     cwd: Option<&Path>,
     envp: Vec<CString>,
+    limits: &crate::config::Limits,
 ) -> Result<i32> {
     if argv.is_empty() {
         return Err(anyhow!("no command to run"));
@@ -110,12 +111,31 @@ pub fn run_with_sbpl(
         return Err(std::io::Error::last_os_error()).context("fork");
     }
     if pid == 0 {
-        child_exec(policy, cwd_c.as_deref(), &prog, &argv_ptrs, &envp_ptrs);
+        child_exec(policy, cwd_c.as_deref(), &prog, &argv_ptrs, &envp_ptrs, limits);
     }
 
     CHILD_PID.store(pid, Ordering::SeqCst);
     install_signal_forwarders();
     crate::log::info(format_args!("forked pid {pid}"));
+
+    // Wall-clock watchdog: if the profile sets `wall_timeout_seconds`, spawn
+    // a thread that SIGTERMs after that window and escalates to SIGKILL 3 s
+    // later if the child is still running.
+    if let Some(secs) = limits.wall_timeout_seconds {
+        let child = pid;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            // Best-effort TERM then KILL. We race with natural exit; EINVAL
+            // / ESRCH from a reaped pid is fine.
+            eprintln!("sandkasten │ timeout reached ({secs}s) — sending SIGTERM to pid {child}");
+            // SAFETY: kill() with a valid signal and the recorded pid.
+            unsafe { libc::kill(child, libc::SIGTERM) };
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            eprintln!("sandkasten │ child didn't exit within 3 s of SIGTERM — SIGKILL");
+            unsafe { libc::kill(child, libc::SIGKILL) };
+        });
+    }
+
     wait_for(pid)
 }
 
@@ -125,8 +145,20 @@ fn child_exec(
     prog: &std::ffi::CStr,
     argv: &[*const libc::c_char],
     envp: &[*const libc::c_char],
+    limits: &crate::config::Limits,
 ) -> ! {
-    // Apply the sandbox before anything else.
+    // Apply POSIX resource limits *before* the sandbox. setrlimit itself is
+    // unrestricted by Seatbelt, so order doesn't matter for correctness;
+    // doing it first keeps behaviour identical if sandbox ever got tighter
+    // around setrlimit in the future.
+    if let Err(lbl) = crate::limits::apply(limits) {
+        let _ = write_stderr(b"sandkasten: setrlimit failed: ");
+        let _ = write_stderr(lbl.as_bytes());
+        let _ = write_stderr(b"\n");
+        unsafe { libc::_exit(127) };
+    }
+
+    // Apply the sandbox.
     if let Err(e) = ffi::apply(policy) {
         // stderr write is best-effort; we're still pre-sandbox-exec but mid-fork.
         let _ = write_stderr(b"sandkasten: sandbox apply failed: ");

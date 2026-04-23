@@ -19,6 +19,7 @@ use std::process::ExitCode;
 mod cli;
 mod config;
 mod learn_core;
+mod limits;
 #[macro_use]
 mod log;
 mod templates;
@@ -47,10 +48,14 @@ fn main() -> ExitCode {
 
 fn run(args: cli::Cli) -> Result<i32> {
     match args.command {
-        cli::Command::Run { profile, cwd, argv } => {
+        cli::Command::Run { profile, cwd, timeout, argv } => {
             let raw = config::load(&profile)?;
             let ctx = config::ExpandContext::detect(argv.first().map(String::as_str))?;
-            let prof = config::finalize(raw, &ctx)?;
+            let mut prof = config::finalize(raw, &ctx)?;
+            // CLI --timeout overrides the profile's value.
+            if let Some(t) = timeout.as_deref() {
+                prof.limits.wall_timeout_seconds = Some(parse_duration_seconds(t)?);
+            }
             log::info(format_args!(
                 "profile={:?} cwd={} target={}",
                 prof.name.as_deref().unwrap_or("?"),
@@ -203,6 +208,31 @@ fn render_policy(p: &config::Profile) -> Result<String> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn render_policy(_p: &config::Profile) -> Result<String> {
     Err(anyhow!("render not supported on this platform"))
+}
+
+/// Parse a simple duration like `30s`, `5m`, `2h`, `150` (seconds) into seconds.
+fn parse_duration_seconds(s: &str) -> Result<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(anyhow!("empty duration"));
+    }
+    // Trailing unit: s/m/h/d
+    let (num, mult) = if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, 1u64)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, 60)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, 3600)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped, 86_400)
+    } else {
+        (s, 1)
+    };
+    let n: u64 = num
+        .parse()
+        .map_err(|_| anyhow!("invalid duration {s:?} (expected e.g. 30s, 5m, 2h)"))?;
+    n.checked_mul(mult)
+        .ok_or_else(|| anyhow!("duration overflow: {s}"))
 }
 
 fn list_profiles() {

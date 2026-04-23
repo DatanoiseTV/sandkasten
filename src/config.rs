@@ -26,6 +26,8 @@ pub struct Profile {
     pub system: System,
     #[serde(default)]
     pub env: Env,
+    #[serde(default)]
+    pub limits: Limits,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -190,6 +192,41 @@ pub struct System {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Maximum CPU seconds (RLIMIT_CPU). `None` = inherit.
+    pub cpu_seconds: Option<u64>,
+
+    /// Maximum address-space / virtual memory size in megabytes (RLIMIT_AS).
+    /// Approximates "max resident memory" for most apps.
+    pub memory_mb: Option<u64>,
+
+    /// Maximum single-file size the sandbox may create in megabytes
+    /// (RLIMIT_FSIZE).
+    pub file_size_mb: Option<u64>,
+
+    /// Maximum open file descriptors (RLIMIT_NOFILE).
+    pub open_files: Option<u64>,
+
+    /// Maximum number of processes / threads for the sandboxed user
+    /// (RLIMIT_NPROC). A fork-bomb guard.
+    pub processes: Option<u64>,
+
+    /// Max stack size per thread in megabytes (RLIMIT_STACK).
+    pub stack_mb: Option<u64>,
+
+    /// Allow core dumps? Default false — set RLIMIT_CORE to 0 so the
+    /// sandboxed process can't spill memory to disk on crash.
+    #[serde(default)]
+    pub core_dumps: bool,
+
+    /// Wall-clock timeout in seconds. Parent process SIGTERMs the child
+    /// after this; if the child doesn't exit within 3 s it is SIGKILLed.
+    /// Takes effect even if the CLI `--timeout` isn't passed.
+    pub wall_timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Env {
     /// If true, all parent environment variables are passed through.
     /// If false (default), only variables listed in `pass` are passed.
@@ -348,6 +385,21 @@ impl Profile {
         out.env.pass_all |= self.env.pass_all;
         extend(&mut out.env.pass, self.env.pass);
         out.env.set.extend(self.env.set);
+
+        // Limits — child's scalar wins for each field. `min` semantics
+        // would be safer, but users explicitly extending a parent usually
+        // want to raise limits, and they can always narrow manually.
+        out.limits.cpu_seconds = self.limits.cpu_seconds.or(out.limits.cpu_seconds);
+        out.limits.memory_mb = self.limits.memory_mb.or(out.limits.memory_mb);
+        out.limits.file_size_mb = self.limits.file_size_mb.or(out.limits.file_size_mb);
+        out.limits.open_files = self.limits.open_files.or(out.limits.open_files);
+        out.limits.processes = self.limits.processes.or(out.limits.processes);
+        out.limits.stack_mb = self.limits.stack_mb.or(out.limits.stack_mb);
+        out.limits.core_dumps |= self.limits.core_dumps;
+        out.limits.wall_timeout_seconds = self
+            .limits
+            .wall_timeout_seconds
+            .or(out.limits.wall_timeout_seconds);
 
         out
     }

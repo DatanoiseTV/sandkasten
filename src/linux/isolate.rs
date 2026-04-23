@@ -75,7 +75,7 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
             let _ = nix::unistd::write(std::io::stderr(), msg.as_bytes());
             unsafe { libc::_exit(127) };
         }
-        ForkResult::Parent { child } => parent_wait(child),
+        ForkResult::Parent { child } => parent_wait(child, &profile.limits),
     }
 }
 
@@ -98,6 +98,17 @@ fn child_main(
         }
     }
 
+    // Apply POSIX resource limits.
+    if let Err(lbl) = crate::limits::apply(&profile.limits) {
+        return Err(anyhow!("setrlimit failed: {lbl}"));
+    }
+
+    // Drop ambient privileges — any future setuid binary still inside our
+    // user namespace can't gain real privileges. Defense-in-depth for the
+    // seccomp filter below (otherwise sudoable binaries could try to
+    // widen; here they simply can't).
+    no_new_privs().context("prctl PR_SET_NO_NEW_PRIVS")?;
+
     // Apply Landlock filesystem restrictions.
     lock.apply().context("landlock restrict_self")?;
 
@@ -114,8 +125,21 @@ fn child_main(
     unreachable!()
 }
 
-fn parent_wait(child: Pid) -> Result<i32> {
+fn parent_wait(child: Pid, limits: &crate::config::Limits) -> Result<i32> {
     crate::linux::install_signal_forwarders(child);
+    // Wall-clock watchdog.
+    if let Some(secs) = limits.wall_timeout_seconds {
+        let child_raw = child.as_raw();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            eprintln!("sandkasten │ timeout reached ({secs}s) — SIGTERM pid {child_raw}");
+            // SAFETY: kill() with a signal and pid; harmless on reaped pid.
+            unsafe { libc::kill(child_raw, libc::SIGTERM) };
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            eprintln!("sandkasten │ still alive after SIGTERM — SIGKILL");
+            unsafe { libc::kill(child_raw, libc::SIGKILL) };
+        });
+    }
     loop {
         match waitpid(child, None) {
             Ok(WaitStatus::Exited(_, code)) => return Ok(code),
@@ -133,6 +157,19 @@ fn write_map(path: &str, data: &[u8]) -> Result<()> {
         .open(path)
         .with_context(|| format!("open {path}"))?;
     f.write_all(data).with_context(|| format!("write {path}"))?;
+    Ok(())
+}
+
+/// Set the no_new_privs bit on the current process. Any future exec of a
+/// setuid binary will NOT grant additional privileges, and this bit is
+/// preserved across exec. Required for unprivileged seccomp filtering and
+/// valuable as a defense-in-depth switch even when it isn't strictly needed.
+fn no_new_privs() -> Result<()> {
+    // SAFETY: prctl with PR_SET_NO_NEW_PRIVS takes fixed integer args.
+    let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error()).context("prctl");
+    }
     Ok(())
 }
 

@@ -35,6 +35,12 @@ pub enum Command {
         #[arg(long, short = 'C')]
         cwd: Option<PathBuf>,
 
+        /// Wall-clock timeout. Accepts `30s`, `5m`, `2h`. The parent sends
+        /// SIGTERM; if the child is still alive 3 s later, SIGKILL. Overrides
+        /// the profile's `[limits].wall_timeout_seconds` if set.
+        #[arg(long)]
+        timeout: Option<String>,
+
         /// Command and arguments to run.
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         argv: Vec<String>,
