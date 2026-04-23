@@ -1,0 +1,51 @@
+name = "strict"
+description = "Near-zero permissions. Barely enough to boot a dynamically-linked binary on macOS."
+
+[filesystem]
+allow_metadata_read = true
+# Everything the dynamic linker needs to load a Mach-O binary.
+read = [
+    "/usr/lib",
+    "/usr/share",
+    "/System",
+    "/Library/Apple/System",
+    "/private/var/db/dyld",
+    "/private/var/db/timezone",
+    "/private/var/db/mds",
+    "/dev",
+]
+read_files = [
+    "/etc/hosts",
+    "/etc/resolv.conf",
+    "/etc/services",
+    "/etc/nsswitch.conf",
+    "/etc/localtime",
+    "/dev/null",
+    "/dev/urandom",
+    "/dev/random",
+    "/dev/tty",
+    "/dev/zero",
+]
+
+[network]
+
+[process]
+# intentionally unset — default is no fork, no exec. Extenders grant these
+# explicitly as needed.
+
+[system]
+allow_sysctl_read = true
+# Minimal Mach services needed for dyld / libSystem init. Extenders add more.
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.system.opendirectoryd.libinfo",
+    "com.apple.system.opendirectoryd.membership",
+    "com.apple.logd",
+    "com.apple.diagnosticd",
+    "com.apple.cfprefsd.daemon",
+    "com.apple.cfprefsd.agent",
+]
+
+[env]
+pass = ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR"]

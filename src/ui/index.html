@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sandkasten</title>
+<style>
+  /* ── tokens ────────────────────────────────────────────────── */
+  :root {
+    --bg:          #fbfbfc;
+    --panel:       #ffffff;
+    --panel-hover: #f5f6f8;
+    --border:      #e5e7eb;
+    --border-soft: #eff0f2;
+    --ink:         #0f172a;
+    --ink-soft:    #334155;
+    --muted:       #6b7280;
+    --accent:      #0f172a;
+    --accent-text: #ffffff;
+    --focus:       #2563eb;
+    --ok:          #059669;
+    --warn:        #b45309;
+    --danger:      #dc2626;
+    --radius:      10px;
+    --radius-sm:   6px;
+    --shadow-1:    0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-2:    0 8px 24px rgba(15, 23, 42, 0.08);
+    --shadow-3:    0 20px 48px rgba(15, 23, 42, 0.18);
+    --mono:        ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans:        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter var", system-ui, sans-serif;
+  }
+
+  /* ── reset + base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.5 var(--sans);
+    font-feature-settings: "cv02","cv03","cv04","cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  textarea { resize: vertical; }
+  code, kbd { font-family: var(--mono); font-size: 0.92em; }
+
+  /* ── layout ──────────────────────────────────────────────── */
+  .app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+
+  aside {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .brand {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 20px 14px;
+  }
+  .brand h1 {
+    margin: 0; font-size: 14px; letter-spacing: 0.02em; font-weight: 600;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .brand h1::before {
+    content: ""; width: 8px; height: 8px; border-radius: 2px;
+    background: var(--accent);
+  }
+  .brand .ver { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+  .sidebar-section {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px 6px;
+  }
+  .sidebar-section .label {
+    color: var(--muted); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; font-weight: 500;
+  }
+
+  .prof-list { list-style: none; margin: 0; padding: 4px 10px 10px; overflow-y: auto; }
+  .prof-list li {
+    padding: 8px 12px; border-radius: var(--radius-sm);
+    cursor: pointer; display: flex; flex-direction: column; gap: 2px;
+    margin-bottom: 2px;
+  }
+  .prof-list li:hover { background: var(--panel-hover); }
+  .prof-list li.active { background: var(--ink); color: var(--accent-text); }
+  .prof-list li.active .desc { color: rgba(255,255,255,.72); }
+  .prof-list li .name { font-weight: 500; }
+  .prof-list li .desc {
+    color: var(--muted); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .prof-list .empty-hint { color: var(--muted); font-size: 12px; padding: 4px 12px; }
+
+  /* ── main ─────────────────────────────────────────────────── */
+  main { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+
+  .empty-view {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted); text-align: center; gap: 10px; padding: 40px;
+  }
+  .empty-view .big { font-size: 16px; color: var(--ink-soft); }
+  .empty-view .small { font-size: 12px; }
+
+  .edit-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .toolbar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 24px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar .title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .toolbar .title .name { font-size: 15px; font-weight: 600; }
+  .toolbar .title .sub { color: var(--muted); font-size: 12px; }
+
+  .tabs { display: inline-flex; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px; gap: 2px; }
+  .tabs button {
+    border: none; background: transparent; color: var(--ink-soft);
+    padding: 5px 12px; border-radius: 4px; font-size: 12.5px; font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .tabs button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow-1); }
+
+  .status { font-size: 12px; color: var(--muted); }
+  .status.ok    { color: var(--ok); }
+  .status.err   { color: var(--danger); }
+  .status.dirty { color: var(--warn); }
+
+  .btn {
+    border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+    padding: 6px 12px; border-radius: var(--radius-sm); font-size: 13px;
+    transition: background .12s, border-color .12s, color .12s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--panel-hover); }
+  .btn.primary {
+    background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+    font-weight: 500;
+  }
+  .btn.primary[disabled] { opacity: .35; cursor: default; }
+  .btn.primary:not([disabled]):hover { background: #1e293b; }
+  .btn.danger {
+    color: var(--danger); border-color: var(--border);
+  }
+  .btn.danger:hover { background: #fef2f2; border-color: #fecaca; }
+  .btn.ghost { border-color: transparent; }
+  .btn.ghost:hover { background: var(--panel-hover); }
+  .btn.sm { padding: 4px 8px; font-size: 12px; }
+
+  .body { flex: 1; overflow-y: auto; padding: 22px 24px 40px; }
+  .pane { display: none; max-width: 880px; }
+  .pane.active { display: block; }
+
+  /* ── cards / fieldsets ───────────────────────────────────── */
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    margin: 0 0 16px; box-shadow: var(--shadow-1);
+  }
+  .card header {
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  }
+  .card header h3 { margin: 0; font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-soft); }
+  .card header .hint { color: var(--muted); font-size: 12px; }
+  .card .content { padding: 14px 18px 18px; }
+
+  .field { display: grid; grid-template-columns: 220px 1fr; gap: 14px; padding: 7px 0; align-items: center; }
+  .field .label { color: var(--ink-soft); font-size: 13px; }
+  .field .label .sub { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; margin-top: 1px; }
+  .field input[type=text], .field input[type=number] {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--panel); outline: none; transition: border-color .12s, box-shadow .12s;
+  }
+  .field input[type=text]:focus, .field input[type=number]:focus,
+  textarea:focus, .field input[type=checkbox]:focus-visible {
+    border-color: var(--focus); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  }
+
+  /* toggle switch */
+  .toggle {
+    position: relative; display: inline-block; width: 36px; height: 20px;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .track {
+    position: absolute; inset: 0; background: #d1d5db; border-radius: 999px;
+    transition: background .14s;
+  }
+  .toggle .track::after {
+    content: ""; position: absolute; left: 2px; top: 2px;
+    width: 16px; height: 16px; background: #fff; border-radius: 50%;
+    transition: transform .14s; box-shadow: 0 1px 2px rgba(0,0,0,.18);
+  }
+  .toggle input:checked + .track { background: var(--accent); }
+  .toggle input:checked + .track::after { transform: translateX(16px); }
+
+  .paths-group { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+  .paths-group .plabel {
+    display: flex; align-items: baseline; gap: 8px;
+    color: var(--ink-soft); font-size: 12.5px; font-weight: 500;
+  }
+  .paths-group .plabel .count {
+    font-family: var(--mono); color: var(--muted); font-size: 11px;
+    background: var(--bg); padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border-soft);
+  }
+  .paths-group .plabel .badbadge {
+    font-family: var(--mono); font-size: 11px;
+    background: #fef2f2; color: #991b1b; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid #fecaca;
+  }
+  .paths-group textarea.invalid {
+    border-color: #fecaca;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.08);
+  }
+  .paths-group .errlist {
+    list-style: none; padding: 0; margin: 2px 0 0; display: flex; flex-direction: column; gap: 2px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--danger);
+  }
+  .paths-group .errlist li::before { content: "✗ "; }
+  .paths-group textarea {
+    width: 100%; min-height: 72px; padding: 9px 11px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-family: var(--mono); font-size: 12.5px;
+    outline: none; transition: border-color .12s, box-shadow .12s;
+  }
+
+  /* fine-grained rules */
+  .rules { display: flex; flex-direction: column; gap: 10px; }
+  .rule {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px 14px;
+    align-items: start;
+  }
+  .rule .rule-path {
+    grid-column: 1 / 3;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .rule .rule-path input {
+    flex: 1; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--panel); outline: none; font-family: var(--mono); font-size: 12.5px;
+  }
+  .rule .rule-ops { display: flex; flex-direction: column; gap: 6px; }
+  .rule .rule-ops .title {
+    font-size: 11px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500;
+  }
+  .rule .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    border: 1px solid var(--border); background: var(--panel);
+    padding: 2px 8px; border-radius: 999px; font-size: 11.5px; color: var(--ink-soft);
+    cursor: pointer; user-select: none;
+    transition: background .1s, border-color .1s, color .1s;
+  }
+  .chip:hover { border-color: var(--focus); }
+  .chip.allow.on { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .chip.deny.on  { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .rule .rule-meta { display: flex; align-items: center; gap: 10px; grid-column: 1 / 3; padding-top: 4px; border-top: 1px dashed var(--border); }
+  .rule .rule-meta label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+  .rules-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+
+  /* raw toml */
+  textarea.raw {
+    width: 100%; min-height: calc(100vh - 200px);
+    padding: 14px 16px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--ink);
+    outline: none; box-shadow: var(--shadow-1);
+  }
+
+  /* ── banner ──────────────────────────────────────────────── */
+  .banner {
+    margin-bottom: 16px; padding: 10px 14px; border-radius: var(--radius-sm);
+    background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap;
+  }
+
+  /* ── modal ───────────────────────────────────────────────── */
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(15, 23, 42, 0.28);
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    opacity: 0; pointer-events: none; transition: opacity .14s;
+    z-index: 50;
+  }
+  .backdrop.open { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--panel); border-radius: 12px; box-shadow: var(--shadow-3);
+    width: 420px; max-width: calc(100vw - 32px); padding: 22px 24px;
+    transform: translateY(6px) scale(.99); transition: transform .14s;
+  }
+  .backdrop.open .modal { transform: translateY(0) scale(1); }
+  .modal h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  .modal p { margin: 0 0 14px; color: var(--ink-soft); font-size: 13.5px; }
+  .modal .modal-input {
+    width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--panel); outline: none; font: inherit; margin-bottom: 16px;
+  }
+  .modal .modal-input:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .modal .modal-error { color: var(--danger); font-size: 12px; margin: -8px 0 12px; min-height: 14px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  /* ── toast ───────────────────────────────────────────────── */
+  .toast-wrap {
+    position: fixed; bottom: 22px; right: 22px; display: flex; flex-direction: column; gap: 8px;
+    z-index: 60; pointer-events: none;
+  }
+  .toast {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow-2);
+    min-width: 220px; max-width: 360px;
+    opacity: 0; transform: translateY(4px); transition: opacity .2s, transform .2s;
+    display: flex; align-items: flex-start; gap: 10px;
+    pointer-events: auto;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok::before { content: ""; width: 4px; align-self: stretch; background: var(--ok); border-radius: 4px; }
+  .toast.err::before { content: ""; width: 4px; align-self: stretch; background: var(--danger); border-radius: 4px; }
+  .toast.info::before { content: ""; width: 4px; align-self: stretch; background: var(--focus); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside>
+    <div class="brand">
+      <h1>sandkasten</h1>
+      <span class="ver">ui</span>
+    </div>
+
+    <div class="sidebar-section">
+      <span class="label">Your profiles</span>
+      <button class="btn sm" id="newBtn">+ New</button>
+    </div>
+    <ul class="prof-list" id="userList"></ul>
+
+    <div class="sidebar-section">
+      <span class="label">Built-in templates</span>
+    </div>
+    <ul class="prof-list" id="tplList"></ul>
+  </aside>
+
+  <main>
+    <div id="emptyView" class="empty-view">
+      <div class="big">Select a profile, or create a new one.</div>
+      <div class="small">Profile files: <code>~/.config/sandkasten/profiles/</code></div>
+    </div>
+
+    <div id="editView" class="edit-view" style="display:none;">
+      <div class="toolbar">
+        <div class="title">
+          <span class="name" id="titleName">—</span>
+          <span class="sub" id="titleKind"></span>
+        </div>
+        <div class="tabs" role="tablist">
+          <button class="active" data-tab="form">Form</button>
+          <button data-tab="raw">TOML</button>
+        </div>
+        <span class="status" id="status">ready</span>
+        <button class="btn" id="duplicateBtn" title="Duplicate as a new profile">Duplicate</button>
+        <button class="btn danger" id="deleteBtn" style="display:none">Delete</button>
+        <button class="btn primary" id="saveBtn" disabled>Save</button>
+        <button class="btn primary" id="saveAsBtn" style="display:none">Save as…</button>
+      </div>
+
+      <div class="body">
+        <div id="errBanner" class="banner" style="display:none"></div>
+
+        <!-- ─── Form pane ─── -->
+        <div class="pane active" id="pane-form">
+
+          <section class="card">
+            <header><h3>Identity</h3></header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Name</div>
+                <input type="text" data-k="name" placeholder="my-profile">
+              </div>
+              <div class="field">
+                <div class="label">Description</div>
+                <input type="text" data-k="description" placeholder="What this profile is for">
+              </div>
+              <div class="field">
+                <div class="label">Extends <span class="sub">built-in template to inherit</span></div>
+                <input type="text" data-k="extends" placeholder="strict • self • minimal-cli • dev • network-client">
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header>
+              <h3>Filesystem</h3>
+              <span class="hint">Supports <code>${CWD}</code>, <code>${HOME}</code>, <code>${EXE_DIR}</code>, <code>~</code></span>
+            </header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Allow metadata reads <span class="sub">stat/readdir on any path</span></div>
+                <label class="toggle"><input type="checkbox" data-k="filesystem.allow_metadata_read"><span class="track"></span></label>
+              </div>
+              <div class="paths-group">
+                <div class="plabel">Read (subpaths) <span class="count" id="count-fs-read">0</span></div>
+                <textarea data-k="filesystem.read" placeholder="/usr/lib"></textarea>
+
+                <div class="plabel">Read &amp; write (subpaths) <span class="count" id="count-fs-rw">0</span></div>
+                <textarea data-k="filesystem.read_write" placeholder="${CWD}"></textarea>
+
+                <div class="plabel">Read (single files) <span class="count" id="count-fs-readf">0</span></div>
+                <textarea data-k="filesystem.read_files" placeholder="/etc/hosts"></textarea>
+
+                <div class="plabel">Read &amp; write (single files) <span class="count" id="count-fs-rwf">0</span></div>
+                <textarea data-k="filesystem.read_write_files"></textarea>
+
+                <div class="plabel">Deny (overrides any allow) <span class="count" id="count-fs-deny">0</span></div>
+                <textarea data-k="filesystem.deny" placeholder="${HOME}/.ssh"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header>
+              <h3>Fine-grained rules</h3>
+              <span class="hint">Per-path allow/deny for specific operations</span>
+            </header>
+            <div class="content">
+              <div class="rules-header">
+                <span class="hint" style="color:var(--muted); font-size:12px;">
+                  Rules are evaluated after blanket allows, so denies here win.
+                </span>
+                <button class="btn sm" id="addRuleBtn">+ Add rule</button>
+              </div>
+              <div class="rules" id="rulesList"></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header><h3>Network</h3></header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Allow localhost</div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_localhost"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow DNS <span class="sub">UDP/TCP :53</span></div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_dns"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow inbound binds</div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_inbound"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow ICMP <span class="sub">ping, traceroute</span></div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_icmp"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow ICMPv6</div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_icmpv6"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow raw sockets <span class="sub">AF_INET/SOCK_RAW — privileged</span></div>
+                <label class="toggle"><input type="checkbox" data-k="network.allow_raw_sockets"><span class="track"></span></label>
+              </div>
+              <div class="paths-group">
+                <div class="plabel">Outbound TCP <span class="count" id="count-net-otcp">0</span></div>
+                <textarea data-k="network.outbound_tcp" placeholder="*:443"></textarea>
+                <div class="plabel">Outbound UDP <span class="count" id="count-net-oudp">0</span></div>
+                <textarea data-k="network.outbound_udp"></textarea>
+                <div class="plabel">Inbound TCP binds <span class="count" id="count-net-itcp">0</span></div>
+                <textarea data-k="network.inbound_tcp"></textarea>
+                <div class="plabel">Inbound UDP binds <span class="count" id="count-net-iudp">0</span></div>
+                <textarea data-k="network.inbound_udp"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header><h3>Process</h3></header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Allow fork</div>
+                <label class="toggle"><input type="checkbox" data-k="process.allow_fork"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow exec <span class="sub">children inherit the sandbox</span></div>
+                <label class="toggle"><input type="checkbox" data-k="process.allow_exec"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow signal self</div>
+                <label class="toggle"><input type="checkbox" data-k="process.allow_signal_self"><span class="track"></span></label>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header>
+              <h3>System</h3>
+              <span class="hint">macOS Mach / IOKit / sysctl</span>
+            </header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Allow sysctl read</div>
+                <label class="toggle"><input type="checkbox" data-k="system.allow_sysctl_read"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow IOKit</div>
+                <label class="toggle"><input type="checkbox" data-k="system.allow_iokit"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow POSIX IPC</div>
+                <label class="toggle"><input type="checkbox" data-k="system.allow_ipc"><span class="track"></span></label>
+              </div>
+              <div class="field">
+                <div class="label">Allow ALL Mach services <span class="sub">broad — needed for most GUI apps</span></div>
+                <label class="toggle"><input type="checkbox" data-k="system.allow_mach_all"><span class="track"></span></label>
+              </div>
+              <div class="paths-group">
+                <div class="plabel">Mach services (explicit) <span class="count" id="count-mach">0</span></div>
+                <textarea data-k="system.mach_services" placeholder="com.apple.system.logger"></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header><h3>Environment</h3></header>
+            <div class="content">
+              <div class="field">
+                <div class="label">Pass all env vars</div>
+                <label class="toggle"><input type="checkbox" data-k="env.pass_all"><span class="track"></span></label>
+              </div>
+              <div class="paths-group">
+                <div class="plabel">Pass specific env vars <span class="count" id="count-env">0</span></div>
+                <textarea data-k="env.pass" placeholder="PATH&#10;HOME&#10;LANG"></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ─── TOML pane ─── -->
+        <div class="pane" id="pane-raw">
+          <textarea class="raw" id="rawToml" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- modal + toast containers -->
+<div class="backdrop" id="modalBackdrop">
+  <div class="modal" id="modalBox">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <input class="modal-input" id="modalInput" style="display:none" autocomplete="off">
+    <div class="modal-error" id="modalError"></div>
+    <div class="actions" id="modalActions"></div>
+  </div>
+</div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+  const TOKEN = {{TOKEN}};
+  const H = { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
+  const OP_VOCAB = ['read','write','create','delete','rename','chmod','chown','xattr','ioctl','exec'];
+
+  const $  = q => document.querySelector(q);
+  const $$ = q => Array.from(document.querySelectorAll(q));
+
+  let state = { current: null, dirty: false, builtin: false, rules: [] };
+
+  // ── status / toasts ──────────────────────────────────────
+  function setStatus(t, cls) {
+    const s = $('#status');
+    s.textContent = t;
+    s.className = 'status ' + (cls || '');
+  }
+  function toast(msg, kind='info', ms=3200) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.innerHTML = `<div>${esc(msg)}</div>`;
+    $('#toastWrap').appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ms);
+  }
+
+  // ── modal (replaces alert/confirm/prompt) ────────────────
+  function modal({ title, body='', input=null, validate=null, actions }) {
+    return new Promise(resolve => {
+      $('#modalTitle').textContent = title;
+      $('#modalBody').textContent = body;
+      $('#modalError').textContent = '';
+      const inp = $('#modalInput');
+      if (input !== null) {
+        inp.style.display = '';
+        inp.value = input.value ?? '';
+        inp.placeholder = input.placeholder ?? '';
+      } else {
+        inp.style.display = 'none';
+      }
+      const host = $('#modalActions');
+      host.innerHTML = '';
+      const close = val => {
+        $('#modalBackdrop').classList.remove('open');
+        document.removeEventListener('keydown', keyHandler);
+        setTimeout(() => resolve(val), 150);
+      };
+      const keyHandler = e => {
+        if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        else if (e.key === 'Enter' && (input !== null || actions.find(a => a.primary))) {
+          e.preventDefault();
+          const prim = actions.find(a => a.primary);
+          if (prim) commit(prim);
+        }
+      };
+      const commit = a => {
+        if (a.primary && input !== null && validate) {
+          const err = validate(inp.value);
+          if (err) { $('#modalError').textContent = err; return; }
+        }
+        const payload = input !== null && a.primary ? inp.value : a.value ?? (a.primary ? true : false);
+        close(payload);
+      };
+      for (const a of actions) {
+        const b = document.createElement('button');
+        b.className = 'btn' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : '');
+        b.textContent = a.label;
+        b.onclick = () => commit(a);
+        host.appendChild(b);
+      }
+      document.addEventListener('keydown', keyHandler);
+      $('#modalBackdrop').classList.add('open');
+      if (input !== null) setTimeout(() => inp.focus(), 40);
+    });
+  }
+  function confirmModal(title, body, { danger=false, confirmLabel='Confirm' } = {}) {
+    return modal({ title, body, actions: [
+      { label: 'Cancel', value: false },
+      { label: confirmLabel, primary: true, danger, value: true },
+    ]}).then(v => v === true);
+  }
+  function promptModal(title, body, { placeholder='', value='', confirmLabel='OK', validate=null } = {}) {
+    return modal({ title, body, input: { placeholder, value }, validate, actions: [
+      { label: 'Cancel', value: null },
+      { label: confirmLabel, primary: true },
+    ]});
+  }
+  function alertModal(title, body) {
+    return modal({ title, body, actions: [{ label: 'Close', primary: true, value: true }] });
+  }
+
+  // ── sidebar ──────────────────────────────────────────────
+  async function loadLists() {
+    try {
+      const [profs, tpls] = await Promise.all([
+        fetch('/api/profiles', { headers: H }).then(r => r.json()),
+        fetch('/api/templates', { headers: H }).then(r => r.json()),
+      ]);
+      renderList('#userList', profs, false);
+      renderList('#tplList', tpls, true);
+    } catch (e) {
+      toast('Failed to load profiles: ' + e, 'err');
+    }
+  }
+  function renderList(sel, items, builtin) {
+    const ul = $(sel); ul.innerHTML = '';
+    if (items.length === 0 && !builtin) {
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.textContent = 'none yet — press + New';
+      ul.appendChild(hint);
+      return;
+    }
+    for (const p of items) {
+      const li = document.createElement('li');
+      if (state.current === p.name && state.builtin === builtin) li.classList.add('active');
+      li.innerHTML = `<span class="name">${esc(p.name)}</span><span class="desc">${esc(p.description||'')}</span>`;
+      li.onclick = () => open(p.name, builtin);
+      ul.appendChild(li);
+    }
+  }
+
+  // ── open / save / delete / new ───────────────────────────
+  async function open(name, builtin) {
+    if (state.dirty) {
+      const ok = await confirmModal('Discard changes?', `You have unsaved edits in “${state.current}”.`, { confirmLabel: 'Discard', danger: true });
+      if (!ok) return;
+    }
+    const r = await fetch('/api/profiles/' + encodeURIComponent(name), { headers: H });
+    if (!r.ok) { toast('Load failed', 'err'); return; }
+    const body = await r.json();
+    state.current = name; state.builtin = builtin; state.dirty = false;
+
+    $('#emptyView').style.display = 'none';
+    $('#editView').style.display = 'flex';
+    $('#titleName').textContent = name;
+    $('#titleKind').textContent = builtin ? 'Built-in template · read-only (Save as to edit)' : 'User profile';
+    $('#deleteBtn').style.display = builtin ? 'none' : '';
+    $('#saveBtn').style.display   = builtin ? 'none' : '';
+    $('#saveAsBtn').style.display = builtin ? '' : 'none';
+    $('#duplicateBtn').style.display = '';
+    $('#errBanner').style.display = 'none';
+    $('#saveBtn').disabled = true;
+    $('#rawToml').value = body.raw;
+    formFromToml(body.raw);
+    setReadonly(builtin);
+    validateAllFields();
+    setStatus(builtin ? 'read-only' : 'ready');
+
+    $$('.prof-list li').forEach(li => li.classList.remove('active'));
+    loadLists(); // rehighlight active
+  }
+
+  function setReadonly(ro) {
+    $$('.card input, .card textarea').forEach(e => e.disabled = ro);
+    $('#rawToml').readOnly = ro;
+    $('#addRuleBtn').disabled = ro;
+    $$('.rule input, .rule .chip, .rule button').forEach(e => { if (e.tagName === 'INPUT') e.disabled = ro; else e.style.pointerEvents = ro ? 'none' : ''; });
+  }
+
+  function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]); }
+
+  // ── form ↔ TOML ──────────────────────────────────────────
+  function formFromToml(raw) {
+    const data = parseToml(raw);
+    for (const el of $$('[data-k]')) {
+      const k = el.getAttribute('data-k');
+      const v = dig(data, k);
+      if (el.type === 'checkbox') el.checked = !!v;
+      else if (el.tagName === 'TEXTAREA') el.value = Array.isArray(v) ? v.join('\n') : (v || '');
+      else el.value = v == null ? '' : String(v);
+    }
+    state.rules = Array.isArray(dig(data, 'filesystem.rules')) ? dig(data, 'filesystem.rules') : [];
+    renderRules();
+    updateCounts();
+  }
+  function tomlFromForm() {
+    const get = k => {
+      const el = document.querySelector(`[data-k="${k}"]`);
+      if (!el) return null;
+      if (el.type === 'checkbox') return el.checked;
+      if (el.tagName === 'TEXTAREA') return el.value.split('\n').map(s => s.trim()).filter(Boolean);
+      return el.value.trim();
+    };
+    const out = [];
+    const ident = get('name'); const desc = get('description'); const ext = get('extends');
+    if (ident) out.push(`name = "${tEsc(ident)}"`);
+    if (desc)  out.push(`description = "${tEsc(desc)}"`);
+    if (ext)   out.push(`extends = "${tEsc(ext)}"`);
+    if (out.length) out.push('');
+
+    const sections = [
+      ['filesystem', [
+        ['allow_metadata_read','bool'],
+        ['read','list'],['read_write','list'],['read_files','list'],['read_write_files','list'],['deny','list'],
+      ]],
+      ['network', [
+        ['allow_localhost','bool'],['allow_dns','bool'],['allow_inbound','bool'],
+        ['allow_icmp','bool'],['allow_icmpv6','bool'],['allow_raw_sockets','bool'],
+        ['outbound_tcp','list'],['outbound_udp','list'],['inbound_tcp','list'],['inbound_udp','list'],
+      ]],
+      ['process', [['allow_fork','bool'],['allow_exec','bool'],['allow_signal_self','bool']]],
+      ['system',  [['allow_sysctl_read','bool'],['allow_iokit','bool'],['allow_ipc','bool'],['allow_mach_all','bool'],['mach_services','list']]],
+      ['env',     [['pass_all','bool'],['pass','list']]],
+    ];
+    for (const [sect, fields] of sections) {
+      const body = [];
+      for (const [f,kind] of fields) {
+        const v = get(`${sect}.${f}`);
+        if (kind === 'bool' && v) body.push(`${f} = true`);
+        if (kind === 'list' && Array.isArray(v) && v.length) {
+          body.push(`${f} = [`);
+          for (const item of v) body.push(`  "${tEsc(item)}",`);
+          body.push(']');
+        }
+      }
+      if (body.length) { out.push(`[${sect}]`); out.push(...body); out.push(''); }
+    }
+    // Fine-grained rules — emit as TOML array-of-tables.
+    for (const r of state.rules) {
+      if (!r.path) continue;
+      out.push('[[filesystem.rules]]');
+      out.push(`path = "${tEsc(r.path)}"`);
+      if (r.literal) out.push('literal = true');
+      if (r.allow && r.allow.length) out.push('allow = [' + r.allow.map(x => `"${tEsc(x)}"`).join(', ') + ']');
+      if (r.deny && r.deny.length)   out.push('deny = ['  + r.deny.map(x => `"${tEsc(x)}"`).join(', ')  + ']');
+      out.push('');
+    }
+    return out.join('\n');
+  }
+  function tEsc(s) { return String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
+
+  // Mini TOML parser with array-of-tables support.
+  function parseToml(src) {
+    const root = { filesystem:{}, network:{}, process:{}, system:{}, env:{} };
+    let cur = root;
+    let curPath = [];
+    const lines = src.replace(/\r\n/g,'\n').split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      let line = lines[i].trim(); i++;
+      if (!line || line.startsWith('#')) continue;
+      let m;
+      if ((m = /^\[\[([\w.]+)\]\]$/.exec(line))) {
+        // array of tables
+        const parts = m[1].split('.');
+        let parent = root;
+        for (let j = 0; j < parts.length - 1; j++) {
+          parent[parts[j]] = parent[parts[j]] || {};
+          parent = parent[parts[j]];
+        }
+        const last = parts[parts.length - 1];
+        parent[last] = parent[last] || [];
+        const table = {};
+        parent[last].push(table);
+        cur = table; curPath = parts;
+        continue;
+      }
+      if ((m = /^\[([\w.]+)\]$/.exec(line))) {
+        cur = root;
+        curPath = m[1].split('.');
+        for (const p of curPath) { cur[p] = cur[p] || {}; cur = cur[p]; }
+        continue;
+      }
+      const kv = /^([\w-]+)\s*=\s*(.+)$/.exec(line);
+      if (!kv) continue;
+      const k = kv[1]; let v = kv[2].trim();
+      if (v === 'true') cur[k] = true;
+      else if (v === 'false') cur[k] = false;
+      else if (/^-?\d+$/.test(v)) cur[k] = parseInt(v,10);
+      else if (v.startsWith('"')) cur[k] = readTomlString(v);
+      else if (v.startsWith('[')) {
+        let body = v;
+        while (!body.endsWith(']')) {
+          if (i >= lines.length) break;
+          body += '\n' + lines[i].trim(); i++;
+        }
+        body = body.slice(1, body.lastIndexOf(']'));
+        const arr = [];
+        const re = /"((?:[^"\\]|\\.)*)"/g;
+        let mm; while ((mm = re.exec(body))) arr.push(mm[1].replace(/\\"/g,'"').replace(/\\\\/g,'\\'));
+        cur[k] = arr;
+      }
+    }
+    return root;
+  }
+  function readTomlString(v) {
+    const m = /^"((?:[^"\\]|\\.)*)"/.exec(v);
+    return m ? m[1].replace(/\\"/g,'"').replace(/\\\\/g,'\\') : v;
+  }
+  function dig(o, path) { return path.split('.').reduce((a,k) => (a==null ? a : a[k]), o); }
+
+  // ── rules UI ─────────────────────────────────────────────
+  function renderRules() {
+    const host = $('#rulesList');
+    host.innerHTML = '';
+    if (state.rules.length === 0) {
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.style.padding = '8px 2px';
+      hint.textContent = 'No fine-grained rules.';
+      host.appendChild(hint);
+      return;
+    }
+    state.rules.forEach((rule, idx) => {
+      const el = document.createElement('div');
+      el.className = 'rule';
+      el.innerHTML = `
+        <div class="rule-path">
+          <input type="text" value="${esc(rule.path||'')}" placeholder="/path/to/file or /subtree">
+          <button class="btn ghost sm" data-act="rm" title="Remove">✕</button>
+        </div>
+        <div class="rule-ops">
+          <span class="title">Allow</span>
+          <div class="chips" data-kind="allow">${chipsHtml(rule.allow || [])}</div>
+        </div>
+        <div class="rule-ops">
+          <span class="title">Deny</span>
+          <div class="chips" data-kind="deny">${chipsHtml(rule.deny || [])}</div>
+        </div>
+        <div class="rule-meta">
+          <label><input type="checkbox" ${rule.literal ? 'checked':''} data-act="literal"> Literal (exact file only)</label>
+        </div>
+      `;
+      // wire
+      el.querySelector('[data-act="rm"]').onclick = () => {
+        state.rules.splice(idx, 1); markDirty(); renderRules();
+      };
+      el.querySelector('.rule-path input').oninput = e => { state.rules[idx].path = e.target.value; markDirty(); };
+      el.querySelector('[data-act="literal"]').onchange = e => { state.rules[idx].literal = e.target.checked; markDirty(); };
+      el.querySelectorAll('.chip').forEach(chip => {
+        chip.onclick = () => {
+          const kind = chip.parentElement.dataset.kind;
+          const op = chip.dataset.op;
+          const bucket = state.rules[idx][kind] = (state.rules[idx][kind] || []);
+          const pos = bucket.indexOf(op);
+          if (pos === -1) bucket.push(op); else bucket.splice(pos, 1);
+          chip.classList.toggle('on');
+          markDirty();
+        };
+      });
+      host.appendChild(el);
+    });
+    setReadonly(state.builtin);
+  }
+  function chipsHtml(selected) {
+    return OP_VOCAB.map(op => {
+      const on = selected.includes(op);
+      return `<span class="chip ${on ? 'on' : ''}" data-op="${op}">${op}</span>`;
+    }).join('');
+  }
+  $('#addRuleBtn').onclick = () => {
+    state.rules.push({ path:'', literal:false, allow:[], deny:[] });
+    markDirty(); renderRules();
+    // focus the new input
+    setTimeout(() => {
+      const inputs = $$('.rule .rule-path input');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }, 20);
+  };
+  // Fix chip coloring by kind (allow/deny) after render.
+  const observer = new MutationObserver(() => {
+    $$('.rule .chips').forEach(c => {
+      c.querySelectorAll('.chip').forEach(ch => ch.classList.add(c.dataset.kind));
+    });
+  });
+  observer.observe($('#rulesList'), { childList: true });
+
+  // ── line-level validators ────────────────────────────────
+  // Each validator receives a trimmed line and returns null if valid, or
+  // a short error message if invalid.
+  const V = {
+    absPath(line) {
+      if (!line) return null;
+      // Accept ~, ${VAR}, or /absolute
+      if (/^~($|\/)/.test(line)) return null;
+      if (/^\$\{[A-Z_][A-Z0-9_]*\}/i.test(line)) return null;
+      if (line.startsWith('/')) return null;
+      return 'must be absolute (start with /, ~, or ${VAR})';
+    },
+    endpoint(line) {
+      if (!line) return null;
+      // Reject CIDR — SBPL has no native form, document.
+      if (/\/\d{1,3}$/.test(line) || line.includes('/')) {
+        return 'CIDR not supported — use host:port or *:port';
+      }
+      // IPv6 [::]:port
+      let host, port;
+      if (line.startsWith('[')) {
+        const close = line.indexOf(']');
+        if (close < 0) return "missing ']' in IPv6 literal";
+        host = line.slice(1, close);
+        const tail = line.slice(close + 1);
+        if (!tail.startsWith(':')) return "missing :port after ']'";
+        port = tail.slice(1);
+      } else {
+        const i = line.lastIndexOf(':');
+        if (i < 0) return 'expected host:port';
+        host = line.slice(0, i);
+        port = line.slice(i + 1);
+      }
+      if (!host) return 'empty host';
+      if (host !== '*') {
+        // IPv4?
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+          const parts = host.split('.').map(Number);
+          if (parts.some(p => p > 255)) return `invalid IPv4: ${host}`;
+        }
+        // IPv6 is crude — allow anything with colons inside bracketed form
+        else if (/^[a-f0-9:]+$/i.test(host)) {
+          if (!/^([a-f0-9]{0,4}:)+[a-f0-9]{0,4}$/i.test(host)) return `invalid IPv6: ${host}`;
+        } else {
+          // hostname: RFC 1123-ish
+          if (host.length > 253) return 'hostname too long';
+          if (!/^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(host)) {
+            return `invalid hostname: ${host}`;
+          }
+        }
+      }
+      if (port !== '*') {
+        if (!/^\d+$/.test(port)) return 'port must be a number or *';
+        const n = parseInt(port, 10);
+        if (n < 0 || n > 65535) return `port out of range: ${n}`;
+      }
+      return null;
+    },
+    envName(line) {
+      if (!line) return null;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(line)) return 'invalid env var name';
+      return null;
+    },
+    machName(line) {
+      if (!line) return null;
+      if (!/^[A-Za-z][A-Za-z0-9._-]*$/.test(line)) return 'invalid service name';
+      return null;
+    },
+  };
+  const VALIDATORS = {
+    'filesystem.read':             V.absPath,
+    'filesystem.read_write':       V.absPath,
+    'filesystem.read_files':       V.absPath,
+    'filesystem.read_write_files': V.absPath,
+    'filesystem.deny':             V.absPath,
+    'network.outbound_tcp':        V.endpoint,
+    'network.outbound_udp':        V.endpoint,
+    'network.inbound_tcp':         V.endpoint,
+    'network.inbound_udp':         V.endpoint,
+    'system.mach_services':        V.machName,
+    'env.pass':                    V.envName,
+  };
+
+  function validateField(ta, validator) {
+    const group = ta.closest('.paths-group');
+    const plabel = ta.previousElementSibling;
+    let bad = [];
+    ta.value.split('\n').forEach((raw, idx) => {
+      const line = raw.trim();
+      const err = validator(line);
+      if (err) bad.push({ line, idx: idx + 1, err });
+    });
+    ta.classList.toggle('invalid', bad.length > 0);
+    // badge + list
+    let badge = plabel.querySelector('.badbadge');
+    if (bad.length === 0) {
+      if (badge) badge.remove();
+      // remove err list if present
+      const nextErr = ta.nextElementSibling;
+      if (nextErr && nextErr.classList && nextErr.classList.contains('errlist')) nextErr.remove();
+    } else {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'badbadge';
+        plabel.appendChild(badge);
+      }
+      badge.textContent = bad.length + ' bad';
+      let list = ta.nextElementSibling;
+      if (!list || !list.classList.contains('errlist')) {
+        list = document.createElement('ul');
+        list.className = 'errlist';
+        ta.after(list);
+      }
+      list.innerHTML = bad.slice(0, 5).map(b =>
+        `<li>line ${b.idx}: ${esc(b.err)}${b.line ? ' — ' + esc(b.line) : ''}</li>`
+      ).join('') + (bad.length > 5 ? `<li>… ${bad.length - 5} more</li>` : '');
+    }
+    return bad.length === 0;
+  }
+
+  function validateAllFields() {
+    let allOk = true;
+    for (const [k, v] of Object.entries(VALIDATORS)) {
+      const ta = document.querySelector(`[data-k="${k}"]`);
+      if (ta && !validateField(ta, v)) allOk = false;
+    }
+    // rule paths
+    $$('.rule .rule-path input').forEach(inp => {
+      const err = V.absPath(inp.value.trim());
+      inp.style.borderColor = err ? '#fecaca' : '';
+    });
+    return allOk;
+  }
+
+  // ── counts next to path labels ───────────────────────────
+  function updateCounts() {
+    const map = {
+      'count-fs-read':   'filesystem.read',
+      'count-fs-rw':     'filesystem.read_write',
+      'count-fs-readf':  'filesystem.read_files',
+      'count-fs-rwf':    'filesystem.read_write_files',
+      'count-fs-deny':   'filesystem.deny',
+      'count-net-otcp':  'network.outbound_tcp',
+      'count-net-oudp':  'network.outbound_udp',
+      'count-net-itcp':  'network.inbound_tcp',
+      'count-net-iudp':  'network.inbound_udp',
+      'count-mach':      'system.mach_services',
+      'count-env':       'env.pass',
+    };
+    for (const [id, k] of Object.entries(map)) {
+      const el = document.getElementById(id);
+      const ta = document.querySelector(`[data-k="${k}"]`);
+      if (!el || !ta) continue;
+      const n = ta.value.split('\n').map(s => s.trim()).filter(Boolean).length;
+      el.textContent = n;
+    }
+  }
+  document.addEventListener('input', e => {
+    if (e.target.closest('#editView')) {
+      markDirty();
+      if (e.target.tagName === 'TEXTAREA' || e.target.type === 'text') {
+        updateCounts();
+        // Validate just the touched field for responsiveness.
+        if (e.target.dataset.k && VALIDATORS[e.target.dataset.k]) {
+          validateField(e.target, VALIDATORS[e.target.dataset.k]);
+        }
+      }
+    }
+  });
+
+  function markDirty() {
+    if (state.builtin) return;
+    state.dirty = true;
+    $('#saveBtn').disabled = false;
+    setStatus('modified', 'dirty');
+  }
+
+  // ── tabs ─────────────────────────────────────────────────
+  $$('.tabs button').forEach(b => b.onclick = () => {
+    if (b.dataset.tab === 'raw') $('#rawToml').value = tomlFromForm();
+    else if (b.dataset.tab === 'form') formFromToml($('#rawToml').value);
+    $$('.tabs button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    $$('.pane').forEach(p => p.classList.remove('active'));
+    document.getElementById('pane-' + b.dataset.tab).classList.add('active');
+  });
+
+  // ── save / save-as / duplicate / delete / new ───────────
+  async function preflight() {
+    if (!validateAllFields()) {
+      const ok = await confirmModal(
+        'Some entries look invalid',
+        'There are lines with validation warnings in the form. Save anyway?',
+        { confirmLabel: 'Save anyway', danger: true }
+      );
+      if (!ok) return null;
+    }
+    return $('.tabs button.active').dataset.tab === 'raw' ? $('#rawToml').value : tomlFromForm();
+  }
+
+  async function putProfile(name, raw) {
+    setStatus('saving…');
+    const r = await fetch('/api/profiles/' + encodeURIComponent(name), {
+      method: 'PUT', headers: H, body: raw,
+    });
+    if (r.ok) {
+      $('#errBanner').style.display = 'none';
+      setStatus('saved', 'ok');
+      return true;
+    }
+    const err = await r.json().catch(() => ({}));
+    $('#errBanner').style.display = '';
+    $('#errBanner').textContent = err.error || ('HTTP ' + r.status);
+    setStatus('save failed', 'err');
+    toast('Save failed', 'err');
+    return false;
+  }
+
+  $('#saveBtn').onclick = async () => {
+    if (state.builtin) return;
+    const raw = await preflight(); if (raw == null) return;
+    if (await putProfile(state.current, raw)) {
+      state.dirty = false; $('#saveBtn').disabled = true;
+      toast('Saved “' + state.current + '”', 'ok');
+      loadLists();
+    }
+  };
+
+  async function saveAsFlow() {
+    const raw0 = await preflight(); if (raw0 == null) return;
+    // Suggest a name based on the current one.
+    const suggested = state.current + '-copy';
+    const name = await promptModal(
+      state.builtin ? 'Save as new profile' : 'Duplicate profile',
+      state.builtin
+        ? `Built-in templates are read-only. Save a copy as a new user profile.`
+        : `Save a copy of “${state.current}” under a new name.`,
+      {
+        placeholder: 'my-profile',
+        value: suggested,
+        confirmLabel: 'Save',
+        validate: v => {
+          if (!v.trim()) return 'Name is required.';
+          if (!/^[a-zA-Z0-9_-]+$/.test(v.trim())) return 'Only letters, digits, - and _ are allowed.';
+          if (v.trim() === state.current && !state.builtin) return 'Pick a name different from the current profile.';
+          return null;
+        }
+      }
+    );
+    if (name === null) return;
+    const target = name.trim();
+    // If the target exists, confirm overwrite.
+    const listed = await fetch('/api/profiles', { headers: H }).then(r => r.json()).catch(() => []);
+    if (listed.some(p => p.name === target)) {
+      const ok = await confirmModal(
+        'Overwrite existing profile?',
+        `A user profile named “${target}” already exists.`,
+        { confirmLabel: 'Overwrite', danger: true }
+      );
+      if (!ok) return;
+    }
+    // Rewrite the "name" line in the TOML so it matches the new filename.
+    const raw = raw0.replace(/^(\s*)name\s*=\s*".*"/m, `$1name = "${target.replace(/"/g,'\\"')}"`);
+    if (await putProfile(target, raw)) {
+      toast('Saved as “' + target + '”', 'ok');
+      await loadLists();
+      open(target, false);
+    }
+  }
+  $('#saveAsBtn').onclick = saveAsFlow;
+  $('#duplicateBtn').onclick = saveAsFlow;
+  $('#deleteBtn').onclick = async () => {
+    const ok = await confirmModal(
+      'Delete profile?',
+      `“${state.current}” will be removed permanently.`,
+      { confirmLabel: 'Delete', danger: true }
+    );
+    if (!ok) return;
+    const r = await fetch('/api/profiles/' + encodeURIComponent(state.current), {
+      method: 'DELETE', headers: H,
+    });
+    if (r.ok) {
+      toast('Deleted “' + state.current + '”', 'ok');
+      state.current = null; state.dirty = false;
+      $('#editView').style.display = 'none';
+      $('#emptyView').style.display = 'flex';
+      loadLists();
+    } else {
+      toast('Delete failed', 'err');
+    }
+  };
+  $('#newBtn').onclick = async () => {
+    const name = await promptModal(
+      'New profile',
+      'Letters, digits, dashes and underscores only.',
+      {
+        placeholder: 'my-profile',
+        confirmLabel: 'Create',
+        validate: v => {
+          if (!v.trim()) return 'Name is required.';
+          if (!/^[a-zA-Z0-9_-]+$/.test(v.trim())) return 'Only letters, digits, - and _ are allowed.';
+          return null;
+        }
+      }
+    );
+    if (name === null) return;
+    const clean = name.trim();
+    const stub = `name = "${clean}"\ndescription = "New sandkasten profile."\nextends = "strict"\n\n[filesystem]\nallow_metadata_read = true\n\n[process]\n# allow_fork = true\n# allow_exec = true\n\n[env]\npass = ["PATH", "HOME", "TERM", "LANG"]\n`;
+    const r = await fetch('/api/profiles/' + encodeURIComponent(clean), {
+      method: 'PUT', headers: H, body: stub,
+    });
+    if (r.ok) {
+      await loadLists();
+      open(clean, false);
+      toast('Created “' + clean + '”', 'ok');
+    } else {
+      toast('Create failed', 'err');
+    }
+  };
+
+  // backdrop click closes
+  $('#modalBackdrop').addEventListener('click', e => {
+    if (e.target === $('#modalBackdrop')) {
+      $('#modalBackdrop').classList.remove('open');
+    }
+  });
+
+  loadLists();
+</script>
+</body>
+</html>

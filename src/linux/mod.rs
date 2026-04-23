@@ -1,0 +1,163 @@
+//! Linux backend: user/mount/pid/ipc/uts + optional net namespace, Landlock
+//! filesystem LSM, and a seccomp-BPF deny-list for obviously dangerous syscalls.
+//!
+//! Design notes and limits (documented in README too):
+//!
+//! * Filesystem: Landlock is allow-list only. The `deny` list in a profile is
+//!   enforced by **omission** — a path in `deny` is pruned from any enclosing
+//!   `read` / `read_write` subtree before the Landlock ruleset is built.
+//!   (macOS supports true deny-overrides via SBPL last-match-wins.)
+//!
+//! * Network: an unprivileged user namespace lets us create a private netns with
+//!   only `lo`. We support three effective modes:
+//!     - no network (default)
+//!     - localhost-only (`allow_localhost = true`)
+//!     - host network (if neither of the above nor any explicit rule is set
+//!       AND `allow_inbound` or any outbound rule is present — we inherit
+//!       the parent netns rather than isolate. v1 does not implement
+//!       per-IP outbound filtering on Linux; it's kernel-enforced on macOS.)
+//!
+//! * Seccomp: deny-list of kernel-admin and introspection syscalls
+//!   (ptrace, bpf, kexec, module ops, mount, pivot_root, etc.). Process
+//!   isolation remains primarily a namespace property.
+
+mod isolate;
+pub(crate) mod landlock_fs;
+pub mod learn;
+pub(crate) mod seccomp_filter;
+
+use crate::config::Profile;
+use anyhow::{anyhow, Context, Result};
+use std::ffi::CString;
+use std::path::Path;
+use std::sync::atomic::{AtomicI32, Ordering};
+
+static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+
+pub(crate) fn build_envp(env: &crate::config::Env) -> Result<Vec<CString>> {
+    let mut out: Vec<CString> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut add = |out: &mut Vec<CString>, seen: &mut std::collections::BTreeSet<String>, k: &str, v: &str| -> Result<()> {
+        if seen.insert(k.to_string()) {
+            out.push(CString::new(format!("{k}={v}")).context("env NUL")?);
+        }
+        Ok(())
+    };
+    for (k, v) in &env.set {
+        add(&mut out, &mut seen, k, v)?;
+    }
+    if env.pass_all {
+        for (k, v) in std::env::vars() {
+            add(&mut out, &mut seen, &k, &v)?;
+        }
+    } else {
+        for key in &env.pass {
+            if let Ok(v) = std::env::var(key) {
+                add(&mut out, &mut seen, key, &v)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+extern "C" fn forward_signal(sig: libc::c_int) {
+    let pid = CHILD_PID.load(Ordering::SeqCst);
+    if pid > 0 {
+        unsafe { libc::kill(pid, sig) };
+    }
+}
+
+pub(crate) fn install_signal_forwarders(child: nix::unistd::Pid) {
+    CHILD_PID.store(child.as_raw(), Ordering::SeqCst);
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = forward_signal as usize;
+        unsafe {
+            libc::sigaction(sig, &action, std::ptr::null_mut());
+        }
+    }
+}
+
+pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32> {
+    if argv.is_empty() {
+        return Err(anyhow!("no command to run"));
+    }
+    isolate::run(profile, cwd, argv)
+}
+
+/// Human-readable policy summary used by the `render` command.
+pub fn render(p: &Profile) -> String {
+    let mut s = String::new();
+    s.push_str("# sandkasten Linux policy\n");
+    if let Some(n) = &p.name {
+        s.push_str(&format!("# profile: {n}\n"));
+    }
+    s.push_str("\n[namespaces]\n");
+    s.push_str("  user, mount, pid, ipc, uts");
+    let net_mode = net_mode(p);
+    s.push_str(&format!("{}\n", if net_mode.unshare_net { ", net" } else { "" }));
+
+    s.push_str("\n[filesystem — Landlock ruleset]\n");
+    for p in &p.filesystem.read {
+        s.push_str(&format!("  read       {p}\n"));
+    }
+    for p in &p.filesystem.read_write {
+        s.push_str(&format!("  read+write {p}\n"));
+    }
+    if !p.filesystem.deny.is_empty() {
+        s.push_str("  (deny: Linux enforces by subtree omission — see README)\n");
+        for d in &p.filesystem.deny {
+            s.push_str(&format!("  deny       {d}\n"));
+        }
+    }
+
+    s.push_str("\n[network]\n");
+    s.push_str(&format!("  mode: {}\n", net_mode.label));
+    if !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty() {
+        s.push_str("  (note: Linux v1 does not enforce per-IP/port outbound — these entries are ignored)\n");
+    }
+
+    s.push_str("\n[seccomp]\n");
+    s.push_str("  deny-list for: ptrace, bpf, kexec_load, module ops,\n");
+    s.push_str("                 mount/umount2, pivot_root, chroot, setns,\n");
+    s.push_str("                 unshare, reboot, iopl/ioperm, swapon/off,\n");
+    s.push_str("                 keyctl, perf_event_open, syslog, delete_module\n");
+
+    s
+}
+
+pub(super) struct NetMode {
+    pub unshare_net: bool,
+    pub bring_up_lo: bool,
+    pub label: &'static str,
+}
+
+pub(super) fn net_mode(p: &Profile) -> NetMode {
+    let has_outbound = !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty();
+    let has_inbound = p.network.allow_inbound
+        || !p.network.inbound_tcp.is_empty()
+        || !p.network.inbound_udp.is_empty();
+    if p.network.allow_localhost && !has_outbound && !has_inbound && !p.network.allow_dns {
+        return NetMode {
+            unshare_net: true,
+            bring_up_lo: true,
+            label: "localhost-only (private netns + lo up)",
+        };
+    }
+    if !p.network.allow_localhost
+        && !p.network.allow_dns
+        && !has_outbound
+        && !has_inbound
+    {
+        return NetMode {
+            unshare_net: true,
+            bring_up_lo: false,
+            label: "none (private netns, no interfaces)",
+        };
+    }
+    NetMode {
+        unshare_net: false,
+        bring_up_lo: false,
+        label: "host (inherits parent netns — per-IP filtering not enforced on Linux v1)",
+    }
+}

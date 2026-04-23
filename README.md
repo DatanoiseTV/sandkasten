@@ -1,0 +1,287 @@
+# sandkasten
+
+A fast, kernel-enforced application sandbox for **macOS** and **Linux**, written in
+Rust. Describe what a program may touch in TOML; sandkasten enforces it at the
+kernel level.
+
+```
+─┐
+ │  profile.toml  ──▶  sandkasten  ──▶  fork ─▶ sandbox_init()  ──▶  execve(target)
+─┘                                                ▲
+                                                  │
+                                    macOS: Seatbelt (MACF)
+                                    Linux: user+mount+pid+ipc+uts[+net] ns
+                                           + Landlock LSM
+                                           + seccomp-BPF
+                                           + PR_SET_NO_NEW_PRIVS
+```
+
+- **Native enforcement.** We call the kernel directly — no userspace
+  interposition — so overhead is effectively zero once policy is applied.
+- **Default deny.** Filesystem, network, Mach, sysctl, IOKit and IPC are all
+  off unless the profile opts in.
+- **Portable profiles.** One TOML file works on both platforms; backend-specific
+  details are handled by the generator.
+- **Tight dependencies.** Small crate list, short build times, the produced
+  binary is a single ~3 MB release binary.
+
+## Status
+
+Experimental — usable, but Apple's Seatbelt is technically SPI (used
+unchanged by Chrome/Firefox for 15+ years; stable in practice). See the
+[Limits](#limits) section before relying on this for a production security
+boundary.
+
+## Quickstart
+
+```sh
+cargo install --path .          # or: cargo build --release
+sandkasten templates            # list built-ins
+sandkasten init                 # writes ./sandkasten.toml (from the `self` template)
+sandkasten run self -- /bin/cat myfile.txt
+```
+
+The default **`self`** template lets the target see only its own working
+directory (`${CWD}`) plus the minimal system paths a dynamically-linked binary
+needs to load. No network, no home directory, no writes outside CWD.
+
+## Commands
+
+```
+sandkasten run <profile> [-C <cwd>] -- <cmd> [args...]
+  Launches the command under the named profile.
+  Profile name resolution: ./foo.toml  →  ~/.config/sandkasten/profiles/foo.toml
+                           →  built-in templates.
+
+sandkasten init [--template <name>] [-o <path>]
+  Writes a starter profile. Default template: self.
+
+sandkasten check <profile>
+  Parses + validates without running.
+
+sandkasten render <profile>
+  Prints the generated policy (SBPL on macOS, a summary on Linux) for audit.
+
+sandkasten list
+  Lists user profiles and built-in templates.
+
+sandkasten templates
+  Lists built-in templates with descriptions.
+
+sandkasten learn [--base <tpl>] [-o <out.toml>] [--auto-system] -- <cmd> [args...]
+  Runs the target with full permissions while capturing every operation it
+  performs. Applies heuristics (subtree collapsing, sensitive-path flagging,
+  wildcard-by-port detection, CWD folding) and interactively proposes a
+  tightened profile. macOS uses SBPL (trace ...); Linux uses strace -f.
+
+sandkasten ui [--port 4173]
+  Opens a local web UI for browsing and editing profiles (see UI section).
+```
+
+Verbosity:
+
+- default / `-q` — silent except errors
+- `-v` — lifecycle one-liners (profile, applied policy, pid, exit)
+- `-vv` — adds a compact rule summary
+- `-vvv` — adds the full generated policy and, on macOS, a post-run
+  kernel-denial capture (deduped, PID-filtered, top 30)
+
+## Profile format
+
+```toml
+name = "my-profile"
+description = "What this profile is for"
+extends = "strict"              # inherit from a built-in
+
+[filesystem]
+allow_metadata_read = true      # stat/readdir on any path
+read = ["/usr/lib", "/System"]  # subtrees readable
+read_write = ["${CWD}", "/tmp"] # subtrees readable + writable
+read_files = ["/etc/hosts"]     # single-file reads
+read_write_files = []
+deny = ["${HOME}/.ssh"]         # blanket deny (overrides allows)
+
+# Fine-grained per-path rules. Ops: read, write, create, delete, rename,
+# chmod, chown, xattr, ioctl, exec, all, write-all.
+[[filesystem.rules]]
+path = "${CWD}/important.log"
+literal = true                  # match the exact file only
+allow = ["read", "write"]
+deny  = ["delete", "chmod"]
+
+[network]
+allow_localhost = true
+allow_dns = true
+allow_inbound = false
+allow_icmp = false              # ICMP (ping)
+allow_icmpv6 = false
+allow_raw_sockets = false       # AF_INET/SOCK_RAW — privileged
+outbound_tcp = ["*:443", "*:80"]
+outbound_udp = []
+inbound_tcp  = []
+inbound_udp  = []
+extra_protocols = []            # e.g. ["sctp"]
+
+[process]
+allow_fork = false              # default-deny; templates opt-in
+allow_exec = false
+allow_signal_self = true
+
+[system]
+allow_sysctl_read = true
+allow_iokit = false
+allow_ipc = false
+allow_mach_all = false          # macOS: very broad; needed for GUI apps
+mach_services = ["com.apple.system.logger"]
+
+[env]
+pass_all = false
+pass = ["PATH", "HOME", "LANG"] # only these vars are forwarded
+set  = { }                      # { KEY = "value" } to override
+```
+
+### Path template variables
+
+Expanded at `sandkasten run` time:
+
+| variable     | resolves to                                         |
+|--------------|-----------------------------------------------------|
+| `${CWD}`     | absolute working directory                          |
+| `${EXE_DIR}` | directory of the resolved target binary             |
+| `${HOME}`    | user's home directory                               |
+| `${ANY_ENV}` | any other env var from the parent shell             |
+| `~`          | shorthand for `${HOME}`                             |
+
+### Built-in templates
+
+| template         | what it gives you                                                          |
+|------------------|----------------------------------------------------------------------------|
+| `self`           | **Default.** Read+write on `${CWD}` only. No rest of filesystem. No net.   |
+| `strict`         | Near-zero permissions. Minimal base every dynamically-linked binary needs. |
+| `minimal-cli`    | `strict` + read on `/usr/bin /bin /sbin /usr/local /opt`. No net.          |
+| `dev`            | Permissive. Read `/`, write CWD/TMP, localhost. Denies secrets.            |
+| `network-client` | `minimal-cli` + outbound TCP 80/443 + DNS. Read-only FS.                   |
+
+## Web UI
+
+```sh
+sandkasten ui
+# ╭─ sandkasten UI ─────────────────────────────────────────
+# │  http://127.0.0.1:46513/?t=<random-token>
+# │  profiles directory: ~/.config/sandkasten/profiles
+# │  Ctrl-C to stop.
+# ╰─────────────────────────────────────────────────────────
+```
+
+The UI is local-only and minimalistic. Features:
+
+- Structured form per profile section (filesystem, network, process, system, env)
+- TOML tab for raw editing with live server-side validation on save
+- Fine-grained rule editor with allow/deny toggles per operation (read, write,
+  create, delete, rename, chmod, chown, xattr, ioctl, exec)
+- Client-side validators for paths (absolute / template vars), network
+  endpoints (`host:port`, IPv4/IPv6, rejects CIDR with an explanatory message),
+  env var names and Mach service names; bad lines are flagged inline
+- Duplicate / Save-As flow for built-in templates and existing profiles
+- Non-system modal dialogs; toast notifications for save/delete
+
+### Web UI security
+
+- Binds **only** to `127.0.0.1` — never the network.
+- **128-bit random bearer token** required on every `/api/*` request; printed
+  once on startup.
+- **CSRF guard**: mutating requests (PUT, DELETE) require an `Origin` header
+  matching the bound `host:port` — a token leaked via URL alone isn't enough
+  to trigger writes cross-origin.
+- **Tight CSP** (`default-src 'none'`), `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy` disabling camera/mic/geolocation, `Cache-Control: no-store`.
+- **Body size cap** of 64 KB on PUT (profiles are tiny; anything larger is
+  refused with 413 before being read into memory).
+- **Path traversal blocked**: profile names must match `[a-zA-Z0-9_-]+`;
+  writes are confined to `~/.config/sandkasten/profiles/`.
+- **No `run` endpoint**: the UI edits profiles only. You launch profiles
+  yourself via `sandkasten run`. This keeps the attack surface small.
+
+## Security model
+
+### What sandkasten enforces, and where
+
+| layer          | macOS                                     | Linux                                                  |
+|----------------|-------------------------------------------|--------------------------------------------------------|
+| filesystem     | Seatbelt/MACF (kernel)                    | Landlock LSM (5.13+)                                   |
+| network (L4)   | Seatbelt `network-outbound/inbound`       | private netns (unshare)                                |
+| mach services  | Seatbelt `mach-lookup`                    | —                                                      |
+| syscalls       | —                                         | seccomp-BPF deny-list                                  |
+| process isol.  | fork inherits sandbox                     | user+pid+ipc+uts namespaces                            |
+| privilege      | inherited                                 | `PR_SET_NO_NEW_PRIVS` (planned)                        |
+
+### Threat model
+
+sandkasten is designed to contain:
+
+- **Untrusted code** (from strangers, the internet, build artifacts) running
+  as your user.
+- **Accidentally malicious tools** — over-eager build scripts, scripts that
+  `rm -rf ~` with an unset variable, etc.
+- **Reading credential files** — `~/.ssh`, `~/.aws`, keychains, browser
+  cookies, `.bash_history`, `.netrc` etc. are flagged and denied in the
+  default profiles.
+
+sandkasten is **not** designed to contain:
+
+- **Kernel exploits.** Anything that breaks out of MACF/Landlock/seccomp bypasses us too.
+- **Physical access or root escalation attempts** — if the target somehow gains root, the sandbox is gone.
+- **Side-channel leakage** — timing attacks, cache covert channels, etc.
+- **Apps intentionally wanting to self-sandbox against themselves** — this is
+  for sandboxing *other* code.
+
+### Safety posture of the tool itself
+
+- No `unsafe_op_in_unsafe_fn`; FFI-heavy modules have module-level safety
+  rationale.
+- `clippy` clean at default level + `clippy::undocumented_unsafe_blocks` + `rust_2018_idioms`.
+- No destructive filesystem operations in `sandkasten run` — it only `fork` /
+  `exec`s. No creating, moving, or deleting files of yours.
+- Profile validator rejects non-absolute paths and unknown file-op names.
+
+## Limits
+
+Shipping honestly so nobody gets surprised:
+
+1. **macOS `sandbox_init` is SPI.** It is undocumented by Apple, but has
+   been used unchanged since Mac OS X 10.5, sits at the MACF layer, and is
+   how every sandboxed macOS browser works. There is no supported
+   replacement for third-party binaries.
+2. **Modern macOS Seatbelt grammar** rejects IP literals and specific
+   hostnames in `remote tcp`/`remote udp` — only `localhost` and `*` are
+   accepted. sandkasten widens any user-specified per-IP rule to `*:PORT`
+   with an explicit warning. True per-IP outbound filtering on macOS
+   requires a userspace proxy.
+3. **macOS learn mode (`(trace ...)`)** no longer materializes a trace file
+   reliably on modern macOS. The heuristics and profile emitter still work;
+   capture quality is best-effort.
+4. **macOS kernel-denial capture** only surfaces *default-deny fallthroughs* —
+   explicit `(deny ...)` rules match silently by design.
+5. **Landlock is allow-list only.** The profile's `deny` list is enforced on
+   Linux by *subtree omission*: a path in `deny` under an allowed subtree will
+   produce a warning telling you to narrow the allow.
+6. **Linux per-IP outbound filtering** isn't implemented yet. Modes are
+   currently: `none` (private netns, no interfaces), `localhost-only`
+   (private netns + `lo` up), or `host` (inherit parent netns). Per-IP/port
+   filtering on Linux requires nftables in the netns — planned.
+
+## Roadmap
+
+- [ ] Linux per-IP outbound via nftables in the netns
+- [ ] Resource limits (`[limits]` section — cpu, memory, FDs, nproc, file size)
+- [ ] `--timeout` flag for wall-clock kills
+- [ ] `PR_SET_NO_NEW_PRIVS` on Linux (defense-in-depth for seccomp)
+- [ ] Mock mode (materialized file overlay for "pretend this path exists")
+- [ ] Profile signing (minisign verify before apply)
+- [ ] Integration tests on Linux (currently macOS-only CI)
+- [ ] Homebrew tap
+
+## License
+
+MIT OR Apache-2.0 at your option.

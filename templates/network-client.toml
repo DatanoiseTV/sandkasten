@@ -1,0 +1,19 @@
+name = "network-client"
+description = "Outbound HTTPS + DNS only. Read-only FS. Good for curl/wget-style tools."
+extends = "minimal-cli"
+
+[network]
+allow_dns = true
+outbound_tcp = [
+    "*:443",
+    "*:80",
+]
+
+[system]
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.nsurlsessiond",
+    "com.apple.SystemConfiguration.configd",
+    "com.apple.dnssd.service",
+]

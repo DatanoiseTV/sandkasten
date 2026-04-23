@@ -1,0 +1,24 @@
+name = "minimal-cli"
+description = "Read-only filesystem for common CLI tools. No network, no writes."
+extends = "strict"
+
+[filesystem]
+read = [
+    "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/local",
+    "/opt",
+]
+read_files = [
+    "/etc/passwd",
+    "/etc/group",
+]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[env]
+pass = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL"]

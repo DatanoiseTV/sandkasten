@@ -1,0 +1,43 @@
+name = "dev"
+description = "Permissive development sandbox. Read FS, write to CWD + tmp, localhost network."
+extends = "minimal-cli"
+
+[filesystem]
+# Wide read so toolchains can find libraries, frameworks, configs.
+read = [
+    "/",
+]
+read_write = [
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+    "~/.cache",
+]
+# But hard-block secrets even though we allow read of "/".
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/Library/Keychains",
+    "~/Library/Application Support/com.apple.TCC",
+]
+
+[network]
+allow_localhost = true
+allow_dns = true
+allow_inbound = true
+
+[system]
+allow_iokit = true
+allow_ipc = true
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.CoreServices.coreservicesd",
+    "com.apple.lsd.mapdb",
+    "com.apple.SecurityServer",
+    "com.apple.coreservices.launchservicesd",
+]
+
+[env]
+pass_all = true

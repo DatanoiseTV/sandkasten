@@ -1,0 +1,30 @@
+name = "self"
+description = "Default. Sandboxed app sees only its own working directory (${CWD}) and the minimal system paths needed to run a binary. No rest of filesystem, no home, no network."
+extends = "minimal-cli"
+
+[filesystem]
+# The sandbox's "own folder" — read+write access to the working directory
+# sandkasten was invoked from. ${CWD} is expanded at runtime.
+read_write = [
+    "${CWD}",
+]
+# Defensive deny for user secrets, in case ${CWD} happens to be deep inside $HOME.
+deny = [
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.config/gcloud",
+    "${HOME}/Library/Keychains",
+]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[system]
+allow_ipc = true
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.CoreServices.coreservicesd",
+    "com.apple.lsd.mapdb",
+]
