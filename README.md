@@ -173,6 +173,22 @@ options = ["edns0", "rotate"]
 "api.example.com" = "127.0.0.1"
 "corp.internal"   = "10.0.0.42"
 
+# Outbound IP redirect (Linux only, nftables DNAT). Hooks an app that dials
+# a hardcoded IP to a local service. For hostname-based hooking use
+# `hosts_entries` — works on both platforms and survives TLS SNI routing.
+[[network.redirects]]
+from = "1.2.3.4:443"
+to   = "127.0.0.1:8443"
+protocol = "tcp"              # tcp | udp
+
+# Outbound blocks. Linux emits nftables REJECT rules; macOS emits SBPL
+# denies (hostname / IP denies are widened to `*:PORT` by Seatbelt's
+# grammar — document the limit).
+[[network.blocks]]
+host = "tracking.example.com"
+port = "*"                    # omit or "*" for all ports
+protocol = "tcp"
+
 # Persistent workspace: cross-platform. Directory is auto-created, added
 # to read_write, exposed to the sandbox as $SANDKASTEN_WORKSPACE, and
 # optionally set as the initial CWD. Pre-populate it or inspect it
@@ -402,6 +418,7 @@ Shipping honestly so nobody gets surprised:
       bind-mount; sidecar-exposed on macOS pending interposer)
 - [x] Persistent workspace directory (`[workspace]`) — cross-platform
 - [x] Linux overlayfs copy-on-write (`[overlay]`)
+- [x] Outbound redirects (Linux nftables DNAT) + outbound blocks (cross-platform)
 - [ ] Bundled `pasta` / `slirp4netns` integration for turnkey outbound
 - [ ] Transparent mock interposition via LD_PRELOAD / DYLD_INSERT_LIBRARIES
 - [ ] Homebrew tap

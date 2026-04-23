@@ -217,6 +217,39 @@ pub struct Network {
     /// `$SANDKASTEN_MOCKS/hosts` on macOS.
     #[serde(default)]
     pub hosts_entries: std::collections::BTreeMap<String, String>,
+
+    /// Outbound IP/port redirects (Linux only). Traffic to `from` is DNAT'd
+    /// to `to` inside the netns via nftables. For hostname-based redirects
+    /// prefer `hosts_entries` — those work on both platforms and survive
+    /// TLS SNI routing. Each entry: `from = "1.2.3.4:443"`, `to =
+    /// "127.0.0.1:8443"`, optional `protocol = "tcp"|"udp"`.
+    #[serde(default)]
+    pub redirects: Vec<Redirect>,
+
+    /// Outbound block list — refuse connections to matching destinations.
+    /// Linux applies via nftables REJECT; macOS via SBPL `(deny …)`
+    /// (limited to `localhost`/`*` hosts by the Seatbelt grammar).
+    #[serde(default)]
+    pub blocks: Vec<Block>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Redirect {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub protocol: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Block {
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<String>,
+    #[serde(default)]
+    pub protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -479,6 +512,8 @@ impl Profile {
         for (k, v) in self.network.hosts_entries {
             out.network.hosts_entries.insert(k, v);
         }
+        out.network.redirects.extend(self.network.redirects);
+        out.network.blocks.extend(self.network.blocks);
 
         // Process: allows are additive — either parent or child granting
         // the permission results in it being granted. Templates can only

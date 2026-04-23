@@ -47,7 +47,8 @@ pub fn apply_if_relevant(net: &Network) -> Result<()> {
         || net.allow_dns
         || net.allow_icmp
         || net.allow_icmpv6;
-    if !has_allowlist {
+    let has_rewrites = !net.redirects.is_empty() || !net.blocks.is_empty();
+    if !has_allowlist && !has_rewrites {
         // Nothing to enforce beyond what the netns already denies.
         return Ok(());
     }
@@ -91,10 +92,29 @@ pub fn apply_if_relevant(net: &Network) -> Result<()> {
 fn render_ruleset(net: &Network) -> Result<String> {
     let mut rules = String::new();
     rules.push_str("table inet sandkasten {\n");
+
+    // NAT hook for DNAT redirects — must come before the filter chain so
+    // rewritten packets are then evaluated by the allowlist.
+    if !net.redirects.is_empty() {
+        rules.push_str("    chain nat_output {\n");
+        rules.push_str(
+            "        type nat hook output priority -100;\n",
+        );
+        for r in &net.redirects {
+            emit_redirect(&mut rules, r)?;
+        }
+        rules.push_str("    }\n");
+    }
+
     rules.push_str("    chain output {\n");
     rules.push_str("        type filter hook output priority 0; policy drop;\n");
     rules.push_str("        oif lo accept\n");
     rules.push_str("        ct state established,related accept\n");
+
+    // Explicit blocks first — evaluated before any accept rules below.
+    for b in &net.blocks {
+        emit_block(&mut rules, b)?;
+    }
 
     if net.allow_dns {
         rules.push_str("        udp dport 53 accept\n");
@@ -116,6 +136,89 @@ fn render_ruleset(net: &Network) -> Result<String> {
     rules.push_str("    }\n");
     rules.push_str("}\n");
     Ok(rules)
+}
+
+fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> {
+    let from = crate::config::parse_endpoint(&r.from)
+        .with_context(|| format!("redirect from {:?}", r.from))?;
+    let to = crate::config::parse_endpoint(&r.to)
+        .with_context(|| format!("redirect to {:?}", r.to))?;
+    let proto = r.protocol.as_deref().unwrap_or("tcp");
+    if proto != "tcp" && proto != "udp" {
+        return Err(anyhow!(
+            "redirect protocol must be tcp or udp, got {proto:?}"
+        ));
+    }
+    // Destination (from) matcher.
+    let (daddr_fam, daddr_val) = match &from.host {
+        crate::config::HostSpec::Ipv4(v) => ("ip", v.to_string()),
+        crate::config::HostSpec::Ipv6(v) => ("ip6", v.to_string()),
+        crate::config::HostSpec::Name(_) | crate::config::HostSpec::Any => {
+            return Err(anyhow!(
+                "redirect `from` must be an IP literal; got {:?} — use hosts_entries for hostnames",
+                r.from
+            ))
+        }
+    };
+    let dport_clause = match from.port {
+        crate::config::PortSpec::Any => String::new(),
+        crate::config::PortSpec::Num(n) => format!(" {proto} dport {n}"),
+    };
+    // Target (to).
+    let to_str = match (&to.host, to.port) {
+        (crate::config::HostSpec::Ipv4(v), crate::config::PortSpec::Num(p)) => format!("{v}:{p}"),
+        (crate::config::HostSpec::Ipv4(v), crate::config::PortSpec::Any) => v.to_string(),
+        (crate::config::HostSpec::Ipv6(v), crate::config::PortSpec::Num(p)) => format!("[{v}]:{p}"),
+        (crate::config::HostSpec::Ipv6(v), crate::config::PortSpec::Any) => format!("[{v}]"),
+        (crate::config::HostSpec::Name(_), _) | (crate::config::HostSpec::Any, _) => {
+            return Err(anyhow!(
+                "redirect `to` must be an IP[:port]; got {:?}",
+                r.to
+            ))
+        }
+    };
+    rules.push_str(&format!(
+        "        {daddr_fam} daddr {daddr_val}{dport_clause} dnat to {to_str}\n"
+    ));
+    Ok(())
+}
+
+fn emit_block(rules: &mut String, b: &crate::config::Block) -> Result<()> {
+    let proto = b.protocol.as_deref().unwrap_or("tcp");
+    let port_clause = match b.port.as_deref() {
+        None | Some("") | Some("*") => String::new(),
+        Some(p) => format!(" {proto} dport {p}"),
+    };
+    // Resolve host: IP literal or hostname → A/AAAA at rule-load time.
+    if let Ok(v4) = b.host.parse::<std::net::Ipv4Addr>() {
+        rules.push_str(&format!("        ip daddr {v4}{port_clause} reject\n"));
+    } else if let Ok(v6) = b.host.parse::<std::net::Ipv6Addr>() {
+        rules.push_str(&format!("        ip6 daddr {v6}{port_clause} reject\n"));
+    } else {
+        match std::net::ToSocketAddrs::to_socket_addrs(&format!("{}:0", b.host)) {
+            Ok(addrs) => {
+                for a in addrs {
+                    match a {
+                        std::net::SocketAddr::V4(v) => rules.push_str(&format!(
+                            "        ip daddr {}{port_clause} reject  # {}\n",
+                            v.ip(),
+                            b.host
+                        )),
+                        std::net::SocketAddr::V6(v) => rules.push_str(&format!(
+                            "        ip6 daddr {}{port_clause} reject  # {}\n",
+                            v.ip(),
+                            b.host
+                        )),
+                    }
+                }
+            }
+            Err(_) => rules.push_str(&format!(
+                "        # could not resolve {} — block skipped\n",
+                b.host
+            )),
+        }
+    }
+    Ok(())
 }
 
 fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()> {

@@ -261,6 +261,44 @@ pub fn generate(p: &Profile) -> String {
         }
     }
 
+    // --- network blocks (best-effort on macOS — grammar limits us) --------
+    if !p.network.blocks.is_empty() {
+        s.push_str(";; --- network blocks ---\n");
+        for b in &p.network.blocks {
+            let host = match b.host.as_str() {
+                "localhost" | "*" => b.host.clone(),
+                _ => "*".to_string(),
+            };
+            let port = b.port.as_deref().unwrap_or("*");
+            let proto = b.protocol.as_deref().unwrap_or("tcp");
+            if proto == "tcp" || proto == "udp" {
+                let _ = writeln!(
+                    s,
+                    "(deny network-outbound (remote {proto} \"{host}:{port}\"))"
+                );
+            }
+        }
+        if p
+            .network
+            .blocks
+            .iter()
+            .any(|b| !matches!(b.host.as_str(), "localhost" | "*"))
+        {
+            s.push_str(
+                ";; NOTE: macOS Seatbelt grammar rejects per-host network denies;\n\
+                 ;; specific hostnames/IPs were widened to `*:PORT`. For precise\n\
+                 ;; per-IP blocking on macOS, use a PF-based or proxy-based approach.\n",
+            );
+        }
+    }
+
+    if !p.network.redirects.is_empty() {
+        s.push_str(
+            ";; NOTE: [[network.redirects]] is Linux-only (nftables DNAT).\n\
+             ;; On macOS, prefer [network.hosts_entries] for hostname-based redirects.\n",
+        );
+    }
+
     s
 }
 
