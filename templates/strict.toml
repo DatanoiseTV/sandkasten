@@ -20,11 +20,16 @@ read_files = [
     "/etc/services",
     "/etc/nsswitch.conf",
     "/etc/localtime",
-    "/dev/null",
     "/dev/urandom",
     "/dev/random",
-    "/dev/tty",
     "/dev/zero",
+]
+
+# /dev/null and /dev/tty are commonly both read *and* written (crashpad,
+# stdio redirection, readline etc.) — permitted as rw literals.
+read_write_files = [
+    "/dev/null",
+    "/dev/tty",
 ]
 
 [network]

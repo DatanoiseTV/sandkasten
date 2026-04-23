@@ -137,6 +137,12 @@ pub struct Network {
     /// entries widen to a broad grant with a warning.
     #[serde(default)]
     pub extra_protocols: Vec<String>,
+
+    /// Allow UNIX domain socket bind/connect. Many modern apps (Chromium,
+    /// Electron, browsers) use UNIX sockets for inter-process coordination
+    /// and fail to start without this.
+    #[serde(default)]
+    pub allow_unix_sockets: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -321,6 +327,7 @@ impl Profile {
         out.network.allow_icmp |= self.network.allow_icmp;
         out.network.allow_icmpv6 |= self.network.allow_icmpv6;
         out.network.allow_raw_sockets |= self.network.allow_raw_sockets;
+        out.network.allow_unix_sockets |= self.network.allow_unix_sockets;
         extend(&mut out.network.extra_protocols, self.network.extra_protocols);
 
         // Process: allows are additive — either parent or child granting

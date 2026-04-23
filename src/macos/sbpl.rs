@@ -159,6 +159,16 @@ pub fn generate(p: &Profile) -> String {
         if p.network.allow_icmpv6 {
             s.push_str("(allow network-outbound (remote icmp6 \"*:*\"))\n");
         }
+        if p.network.allow_unix_sockets {
+            // AF_UNIX bind and connect. Chromium, Electron, VS Code,
+            // Docker-for-Mac, gpg-agent etc. all need this. The precise
+            // Seatbelt filter for unix sockets varies by macOS version, so
+            // we grant the socket() syscall itself and broad local bind;
+            // the filesystem layer still gates which paths the socket
+            // file may be created at.
+            s.push_str("(allow system-socket)\n");
+            s.push_str("(allow network-bind)\n");
+        }
         if p.network.allow_raw_sockets {
             // SBPL has no direct raw-socket filter — this broad grant lets
             // the process open AF_INET/SOCK_RAW. Highly privileged: avoid.
