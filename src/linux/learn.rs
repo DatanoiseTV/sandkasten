@@ -211,14 +211,13 @@ fn first_quoted_arg(args: &str) -> Option<String> {
 ///   `{sa_family=AF_INET6, sin6_port=htons(80), sin6_addr=inet_pton("2001:db8::1"), ...}`
 /// We don't parse AF_UNIX/AF_NETLINK.
 fn parse_sockaddr(args: &str) -> Option<(String, String)> {
-    let (proto_hint, is_v6) = if args.contains("AF_INET6") {
-        (None, true)
+    let is_v6 = if args.contains("AF_INET6") {
+        true
     } else if args.contains("AF_INET") {
-        (None, false)
+        false
     } else {
         return None;
     };
-    let _ = proto_hint;
 
     // Port
     let port_marker = if is_v6 { "sin6_port=htons(" } else { "sin_port=htons(" };

@@ -71,8 +71,12 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
                 lock,
             );
             // Unreached on success (execve); on error print + _exit.
-            let msg = format!("sandkasten: child setup failed: {rc:#}\n");
+            let msg = match rc {
+                Ok(()) => "sandkasten: execve returned Ok unexpectedly\n".to_string(),
+                Err(e) => format!("sandkasten: child setup failed: {e:#}\n"),
+            };
             let _ = nix::unistd::write(std::io::stderr(), msg.as_bytes());
+            // SAFETY: _exit terminates the child without running destructors.
             unsafe { libc::_exit(127) };
         }
         ForkResult::Parent { child } => parent_wait(child, &profile.limits),
@@ -142,18 +146,11 @@ fn child_main(
 
 fn parent_wait(child: Pid, limits: &crate::config::Limits) -> Result<i32> {
     crate::linux::install_signal_forwarders(child);
-    // Wall-clock watchdog.
+    // Wall-clock watchdog via SIGALRM rather than a thread — pthread_create
+    // fails with EINVAL on some kernels after CLONE_NEWUSER (seen inside
+    // LXC, and occasionally on bare-metal 6.x after user namespace entry).
     if let Some(secs) = limits.wall_timeout_seconds {
-        let child_raw = child.as_raw();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(secs));
-            eprintln!("sandkasten │ timeout reached ({secs}s) — SIGTERM pid {child_raw}");
-            // SAFETY: kill() with a signal and pid; harmless on reaped pid.
-            unsafe { libc::kill(child_raw, libc::SIGTERM) };
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            eprintln!("sandkasten │ still alive after SIGTERM — SIGKILL");
-            unsafe { libc::kill(child_raw, libc::SIGKILL) };
-        });
+        crate::linux::install_alarm_watchdog(child, secs);
     }
     loop {
         match waitpid(child, None) {

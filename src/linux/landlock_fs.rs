@@ -47,7 +47,13 @@ impl Prepared {
                         .with_context(|| format!("landlock add_rule read {path}"))?;
                 }
                 Err(e) => {
-                    eprintln!("sandkasten: skipping read path {path:?}: {e}");
+                    // Paths that don't exist on this platform are silently
+                    // skipped at default verbosity — cross-platform templates
+                    // naturally include macOS-only entries on Linux and vice
+                    // versa. Debug level surfaces them for diagnostics.
+                    crate::log::debug(format_args!(
+                        "landlock: skipping read path {path:?}: {e}"
+                    ));
                 }
             }
         }
@@ -59,7 +65,9 @@ impl Prepared {
                         .with_context(|| format!("landlock add_rule rw {path}"))?;
                 }
                 Err(e) => {
-                    eprintln!("sandkasten: skipping rw path {path:?}: {e}");
+                    crate::log::debug(format_args!(
+                        "landlock: skipping rw path {path:?}: {e}"
+                    ));
                 }
             }
         }

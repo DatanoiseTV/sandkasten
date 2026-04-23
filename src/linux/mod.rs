@@ -37,24 +37,29 @@ static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 
 pub(crate) fn build_envp(env: &crate::config::Env) -> Result<Vec<CString>> {
     let mut out: Vec<CString> = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    let mut add = |out: &mut Vec<CString>, seen: &mut std::collections::BTreeSet<String>, k: &str, v: &str| -> Result<()> {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    fn push_kv(
+        out: &mut Vec<CString>,
+        seen: &mut std::collections::BTreeSet<String>,
+        k: &str,
+        v: &str,
+    ) -> Result<()> {
         if seen.insert(k.to_string()) {
             out.push(CString::new(format!("{k}={v}")).context("env NUL")?);
         }
         Ok(())
-    };
+    }
     for (k, v) in &env.set {
-        add(&mut out, &mut seen, k, v)?;
+        push_kv(&mut out, &mut seen, k, v)?;
     }
     if env.pass_all {
         for (k, v) in std::env::vars() {
-            add(&mut out, &mut seen, &k, &v)?;
+            push_kv(&mut out, &mut seen, &k, &v)?;
         }
     } else {
         for key in &env.pass {
             if let Ok(v) = std::env::var(key) {
-                add(&mut out, &mut seen, key, &v)?;
+                push_kv(&mut out, &mut seen, key, &v)?;
             }
         }
     }
@@ -64,7 +69,47 @@ pub(crate) fn build_envp(env: &crate::config::Env) -> Result<Vec<CString>> {
 extern "C" fn forward_signal(sig: libc::c_int) {
     let pid = CHILD_PID.load(Ordering::SeqCst);
     if pid > 0 {
+        // SAFETY: kill with a valid pid + signal.
         unsafe { libc::kill(pid, sig) };
+    }
+}
+
+/// Wall-clock watchdog state for the SIGALRM-based timeout. We can't pass
+/// state to a signal handler directly, so hold it in an atomic + static.
+static WATCHDOG_PID: AtomicI32 = AtomicI32::new(0);
+static WATCHDOG_STAGE: AtomicI32 = AtomicI32::new(0); // 0 → TERM next, 1 → KILL next
+
+extern "C" fn alarm_handler(_sig: libc::c_int) {
+    let pid = WATCHDOG_PID.load(Ordering::SeqCst);
+    if pid <= 0 {
+        return;
+    }
+    let stage = WATCHDOG_STAGE.fetch_add(1, Ordering::SeqCst);
+    // SAFETY: kill + alarm are both async-signal-safe.
+    unsafe {
+        if stage == 0 {
+            libc::kill(pid, libc::SIGTERM);
+            libc::alarm(3);
+        } else {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+/// Install a SIGALRM-based wall-clock watchdog for the given child pid.
+/// Fires SIGTERM after `secs`, then SIGKILL 3 s later if the child is still
+/// alive. Used instead of a std::thread because pthread_create sometimes
+/// fails with EINVAL after CLONE_NEWUSER (seen in LXC).
+pub(crate) fn install_alarm_watchdog(child: nix::unistd::Pid, secs: u64) {
+    WATCHDOG_PID.store(child.as_raw(), Ordering::SeqCst);
+    WATCHDOG_STAGE.store(0, Ordering::SeqCst);
+    // SAFETY: sigaction with a fresh zeroed struct + fn pointer is standard.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = alarm_handler as *const () as usize;
+        libc::sigaction(libc::SIGALRM, &action, std::ptr::null_mut());
+        let clipped = secs.min(i32::MAX as u64 / 2) as libc::c_uint;
+        libc::alarm(clipped);
     }
 }
 
