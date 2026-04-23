@@ -40,7 +40,9 @@ read_write_files = [
 
 [system]
 allow_sysctl_read = true
-# Minimal Mach services needed for dyld / libSystem init. Extenders add more.
+# Minimal Mach services needed for dyld / libSystem init + TLS cert
+# validation (so HTTPS works out of the box when network is enabled).
+# Extenders can add more.
 mach_services = [
     "com.apple.system.logger",
     "com.apple.system.notification_center",
@@ -50,6 +52,13 @@ mach_services = [
     "com.apple.diagnosticd",
     "com.apple.cfprefsd.daemon",
     "com.apple.cfprefsd.agent",
+    # TLS / cert trust (safe — no access to secrets themselves)
+    "com.apple.SecurityServer",
+    "com.apple.trustd",
+    "com.apple.trustd.agent",
+    # DNS + network config
+    "com.apple.SystemConfiguration.configd",
+    "com.apple.dnssd.service",
 ]
 
 [env]

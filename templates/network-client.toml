@@ -4,6 +4,7 @@ extends = "minimal-cli"
 
 [network]
 allow_dns = true
+allow_unix_sockets = true   # many HTTP clients use local sockets for IPC/agent forwarding
 outbound_tcp = [
     "*:443",
     "*:80",

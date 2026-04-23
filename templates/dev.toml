@@ -26,6 +26,7 @@ deny = [
 allow_localhost = true
 allow_dns = true
 allow_inbound = true
+allow_unix_sockets = true
 
 [system]
 allow_iokit = true

@@ -159,8 +159,27 @@ Expanded at `sandkasten run` time:
 | `self`           | **Default.** Read+write on `${CWD}` only. No rest of filesystem. No net.   |
 | `strict`         | Near-zero permissions. Minimal base every dynamically-linked binary needs. |
 | `minimal-cli`    | `strict` + read on `/usr/bin /bin /sbin /usr/local /opt`. No net.          |
-| `dev`            | Permissive. Read `/`, write CWD/TMP, localhost. Denies secrets.            |
 | `network-client` | `minimal-cli` + outbound TCP 80/443 + DNS. Read-only FS.                   |
+| `dev`            | Permissive. Read `/`, write CWD/TMP, localhost. Denies secrets.            |
+| `browser`        | Chromium-family browsers (Brave, Chrome, Edge). Use `--no-sandbox`.        |
+| `electron`       | Electron apps (VS Code, Slack, Discord, Obsidian, …).                      |
+
+**Running a Chromium-based browser.** Chromium has its own internal sandbox
+that calls `sandbox_init` from helper processes; that fails inside an outer
+sandbox. Pass `--no-sandbox` so the outer (sandkasten) sandbox is the only
+enforcement layer. Optionally also pass `--password-store=basic` to silence
+the "Encryption is not available" warning — saved passwords then live
+plaintext in the profile directory, appropriate for a disposable session.
+
+```sh
+sandkasten run browser -- \
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+  --no-sandbox --password-store=basic
+```
+
+The browser inherits the sandbox across its ~10 helper processes. Keychain,
+`~/.ssh`, `~/.aws`, TCC database, shell history and other browsers' profile
+dirs are all explicitly denied.
 
 ## Web UI
 

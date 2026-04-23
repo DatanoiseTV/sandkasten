@@ -16,6 +16,13 @@ deny = [
     "${HOME}/Library/Keychains",
 ]
 
+[network]
+# UNIX-domain sockets are needed by most modern apps (VS Code, GPG agent,
+# Docker, Electron, browsers). Permitting the bind/connect ops is gated
+# further by the filesystem rules — the socket file itself still has to
+# land in a writable path.
+allow_unix_sockets = true
+
 [process]
 allow_fork = true
 allow_exec = true
