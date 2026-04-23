@@ -41,9 +41,21 @@ pub enum Command {
         #[arg(long)]
         timeout: Option<String>,
 
+        /// Refuse to run unless the profile's sidecar `.minisig` signature
+        /// validates against one of the trusted keys. Ignored for built-in
+        /// templates (those ship inside the sandkasten binary).
+        #[arg(long)]
+        verify: bool,
+
         /// Command and arguments to run.
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         argv: Vec<String>,
+    },
+
+    /// Verify a profile's minisign signature against the configured trusted keys.
+    Verify {
+        /// Path or profile name to verify.
+        profile: String,
     },
 
     /// Write a starter profile to disk.

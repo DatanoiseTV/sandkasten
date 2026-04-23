@@ -48,8 +48,10 @@ needs to load. No network, no home directory, no writes outside CWD.
 ## Commands
 
 ```
-sandkasten run <profile> [-C <cwd>] -- <cmd> [args...]
-  Launches the command under the named profile.
+sandkasten run <profile> [-C <cwd>] [--timeout 30s] [--verify] -- <cmd> [args...]
+  Launches the command under the named profile. --timeout accepts s/m/h/d.
+  --verify refuses to run unless the profile's .minisig signature validates
+  against a trusted key (see "Profile signing" below).
   Profile name resolution: ./foo.toml  →  ~/.config/sandkasten/profiles/foo.toml
                            →  built-in templates.
 
@@ -61,6 +63,9 @@ sandkasten check <profile>
 
 sandkasten render <profile>
   Prints the generated policy (SBPL on macOS, a summary on Linux) for audit.
+
+sandkasten verify <profile>
+  Verifies the profile's sidecar minisign signature against trusted keys.
 
 sandkasten list
   Lists user profiles and built-in templates.
@@ -138,6 +143,16 @@ mach_services = ["com.apple.system.logger"]
 pass_all = false
 pass = ["PATH", "HOME", "LANG"] # only these vars are forwarded
 set  = { }                      # { KEY = "value" } to override
+
+[limits]                        # POSIX resource limits (all optional)
+cpu_seconds = 60                # RLIMIT_CPU — kills if exceeded
+memory_mb = 1024                # RLIMIT_AS (+ RLIMIT_DATA on Linux)
+file_size_mb = 100              # RLIMIT_FSIZE — max single-file size
+open_files = 512                # RLIMIT_NOFILE
+processes = 64                  # RLIMIT_NPROC — fork-bomb guard
+stack_mb = 8                    # RLIMIT_STACK
+core_dumps = false              # RLIMIT_CORE = 0 blocks memory-dump on crash
+wall_timeout_seconds = 300      # parent SIGTERMs after N seconds, then SIGKILL +3s
 ```
 
 ### Path template variables
@@ -222,6 +237,35 @@ The UI is local-only and minimalistic. Features:
 - **No `run` endpoint**: the UI edits profiles only. You launch profiles
   yourself via `sandkasten run`. This keeps the attack surface small.
 
+## Profile signing
+
+sandkasten verifies **minisign** ed25519 signatures — same format as Jedisct1's
+`minisign` CLI (Homebrew: `brew install minisign`).
+
+Generate a key pair and sign profiles outside sandkasten:
+
+```sh
+minisign -G -p sandkasten.pub -s sandkasten.key      # one-off: create key pair
+minisign -Sm my-profile.toml -s sandkasten.key       # sign; produces my-profile.toml.minisig
+```
+
+Install the public key as trusted, then run with verification:
+
+```sh
+mkdir -p ~/.config/sandkasten/trusted_keys
+cp sandkasten.pub ~/.config/sandkasten/trusted_keys/
+# or:  export SANDKASTEN_TRUSTED_KEY="$(cat sandkasten.pub)"
+
+sandkasten verify my-profile.toml
+# → ok: my-profile.toml verified against key ~/.config/sandkasten/trusted_keys/sandkasten.pub
+
+sandkasten run --verify my-profile.toml -- my-cmd
+# refuses to launch if the signature doesn't validate against any trusted key
+```
+
+Built-in templates ship inside the signed sandkasten binary — they don't need
+a sidecar signature and `--verify` ignores them.
+
 ## Security model
 
 ### What sandkasten enforces, and where
@@ -292,13 +336,13 @@ Shipping honestly so nobody gets surprised:
 
 ## Roadmap
 
+- [x] Resource limits (`[limits]` section — cpu, memory, FDs, nproc, file size)
+- [x] `--timeout` flag for wall-clock kills
+- [x] `PR_SET_NO_NEW_PRIVS` on Linux (defense-in-depth for seccomp)
+- [x] Profile signing (minisign verify before apply)
 - [ ] Linux per-IP outbound via nftables in the netns
-- [ ] Resource limits (`[limits]` section — cpu, memory, FDs, nproc, file size)
-- [ ] `--timeout` flag for wall-clock kills
-- [ ] `PR_SET_NO_NEW_PRIVS` on Linux (defense-in-depth for seccomp)
 - [ ] Mock mode (materialized file overlay for "pretend this path exists")
-- [ ] Profile signing (minisign verify before apply)
-- [ ] Integration tests on Linux (currently macOS-only CI)
+- [ ] Containerised Linux integration tests in CI
 - [ ] Homebrew tap
 
 ## License

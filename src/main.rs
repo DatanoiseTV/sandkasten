@@ -22,6 +22,7 @@ mod learn_core;
 mod limits;
 #[macro_use]
 mod log;
+mod signing;
 mod templates;
 mod ui;
 
@@ -48,7 +49,20 @@ fn main() -> ExitCode {
 
 fn run(args: cli::Cli) -> Result<i32> {
     match args.command {
-        cli::Command::Run { profile, cwd, timeout, argv } => {
+        cli::Command::Run { profile, cwd, timeout, verify, argv } => {
+            if verify {
+                // Verify only applies to on-disk profiles; built-ins ship inside
+                // the signed binary itself so are implicitly trusted.
+                if templates::builtin(&profile).is_none() {
+                    let path = config::resolve_profile_path(&profile)?;
+                    let rep = signing::verify(&path)?;
+                    log::info(format_args!(
+                        "signature ok for {} (key source: {})",
+                        rep.profile.display(),
+                        rep.key_source
+                    ));
+                }
+            }
             let raw = config::load(&profile)?;
             let ctx = config::ExpandContext::detect(argv.first().map(String::as_str))?;
             let mut prof = config::finalize(raw, &ctx)?;
@@ -111,6 +125,20 @@ fn run(args: cli::Cli) -> Result<i32> {
         } => run_learn(&base, output, auto_system, cwd.as_deref(), &argv),
         cli::Command::Ui { port, no_open } => {
             ui::run(port, !no_open)?;
+            Ok(0)
+        }
+        cli::Command::Verify { profile } => {
+            if templates::builtin(&profile).is_some() {
+                println!("{profile:?} is a built-in template (ships inside the signed sandkasten binary — no separate signature needed)");
+                return Ok(0);
+            }
+            let path = config::resolve_profile_path(&profile)?;
+            let rep = signing::verify(&path)?;
+            println!(
+                "ok: {} verified against key {}",
+                rep.profile.display(),
+                rep.key_source
+            );
             Ok(0)
         }
     }
