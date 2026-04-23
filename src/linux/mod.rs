@@ -24,6 +24,7 @@
 mod isolate;
 pub(crate) mod landlock_fs;
 pub mod learn;
+pub(crate) mod nftables;
 pub(crate) mod seccomp_filter;
 
 use crate::config::Profile;
@@ -114,7 +115,14 @@ pub fn render(p: &Profile) -> String {
     s.push_str("\n[network]\n");
     s.push_str(&format!("  mode: {}\n", net_mode.label));
     if !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty() {
-        s.push_str("  (note: Linux v1 does not enforce per-IP/port outbound — these entries are ignored)\n");
+        s.push_str("  per-IP filtering: applied via nftables inside the netns when `nft` is installed.\n");
+        s.push_str("  external connectivity: requires pasta, slirp4netns, or an already-plumbed netns.\n");
+        for ep in &p.network.outbound_tcp {
+            s.push_str(&format!("    tcp → {ep}\n"));
+        }
+        for ep in &p.network.outbound_udp {
+            s.push_str(&format!("    udp → {ep}\n"));
+        }
     }
 
     s.push_str("\n[seccomp]\n");
@@ -137,27 +145,31 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
     let has_inbound = p.network.allow_inbound
         || !p.network.inbound_tcp.is_empty()
         || !p.network.inbound_udp.is_empty();
-    if p.network.allow_localhost && !has_outbound && !has_inbound && !p.network.allow_dns {
-        return NetMode {
-            unshare_net: true,
-            bring_up_lo: true,
-            label: "localhost-only (private netns + lo up)",
-        };
-    }
-    if !p.network.allow_localhost
+    let all_off = !p.network.allow_localhost
         && !p.network.allow_dns
         && !has_outbound
         && !has_inbound
-    {
+        && !p.network.allow_icmp
+        && !p.network.allow_icmpv6;
+
+    if all_off {
         return NetMode {
             unshare_net: true,
             bring_up_lo: false,
             label: "none (private netns, no interfaces)",
         };
     }
+    if !has_inbound {
+        return NetMode {
+            unshare_net: true,
+            bring_up_lo: p.network.allow_localhost,
+            label:
+                "private netns + nftables per-host allowlist (external connectivity needs pasta/slirp4netns)",
+        };
+    }
     NetMode {
         unshare_net: false,
         bring_up_lo: false,
-        label: "host (inherits parent netns — per-IP filtering not enforced on Linux v1)",
+        label: "host (inherits parent netns — inbound requires this)",
     }
 }

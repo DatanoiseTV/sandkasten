@@ -37,3 +37,30 @@ jobs:
       - run: cargo clippy --all-targets --release
       - run: cargo build --release
       - run: cargo test --release
+
+  linux-smoke:
+    name: Linux (end-to-end sandbox smoke)
+    runs-on: ubuntu-latest
+    needs: linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Ensure unprivileged user namespaces are enabled
+        run: |
+          sysctl kernel.unprivileged_userns_clone 2>/dev/null || true
+          sudo sh -c 'echo 1 > /proc/sys/kernel/unprivileged_userns_clone' 2>/dev/null || true
+      - run: cargo build --release
+      - name: `sandkasten run` end-to-end
+        run: |
+          target/release/sandkasten render self
+          echo 'hello sandkasten' > /tmp/sk-test.txt
+          cd /tmp
+          target/release/sandkasten -v run self -- /bin/cat /tmp/sk-test.txt
+      - name: Verify signing pipeline (no-sig case)
+        run: |
+          set +e
+          target/release/sandkasten verify /tmp/sk-test.txt
+          rc=$?
+          [ $rc -ne 0 ] || { echo "expected non-zero when unsigned"; exit 1; }
+          echo "signing: correctly refused unsigned profile"

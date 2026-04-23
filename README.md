@@ -153,6 +153,12 @@ processes = 64                  # RLIMIT_NPROC — fork-bomb guard
 stack_mb = 8                    # RLIMIT_STACK
 core_dumps = false              # RLIMIT_CORE = 0 blocks memory-dump on crash
 wall_timeout_seconds = 300      # parent SIGTERMs after N seconds, then SIGKILL +3s
+
+[mocks]                         # v1: content sidecar
+files = { "config.json" = '{"api":"https://example/"}' }
+# Materialised to a private tempdir; the path lands in $SANDKASTEN_MOCKS
+# inside the sandbox. Transparent path-interposition (LD_PRELOAD /
+# bind-mount) is planned — until then, mock-aware apps consult the env var.
 ```
 
 ### Path template variables
@@ -329,10 +335,28 @@ Shipping honestly so nobody gets surprised:
 5. **Landlock is allow-list only.** The profile's `deny` list is enforced on
    Linux by *subtree omission*: a path in `deny` under an allowed subtree will
    produce a warning telling you to narrow the allow.
-6. **Linux per-IP outbound filtering** isn't implemented yet. Modes are
-   currently: `none` (private netns, no interfaces), `localhost-only`
-   (private netns + `lo` up), or `host` (inherit parent netns). Per-IP/port
-   filtering on Linux requires nftables in the netns — planned.
+6. **Linux per-IP outbound filtering** is implemented via nftables rules
+   applied inside the private netns. Hostnames are resolved at rule-load
+   time into A/AAAA records. The child process has `CAP_NET_ADMIN` in the
+   user namespace, so rule installation is unprivileged.
+
+   **External connectivity into the netns is not set up by sandkasten**
+   — a fresh netns has no interfaces beyond `lo`. Users wanting real
+   outbound traffic combine sandkasten with an unprivileged network
+   provider (`pasta` from passt-linux, `slirp4netns`, or rootless-podman's
+   network stack) that plumbs a veth-like interface into the netns before
+   sandkasten applies the policy. The nftables rules then enforce the
+   allowlist over whichever connectivity exists.
+
+   Without `nft` on `$PATH`, the netns itself is already a full outbound
+   barrier; sandkasten logs a warning and proceeds.
+
+7. **Mock mode (v1)** is a simple content sidecar — `[mocks.files]` entries
+   are written to a private tempdir and exposed via `$SANDKASTEN_MOCKS` to
+   the sandboxed process. Transparent path interposition (so a program
+   opening `/etc/hostname` reads the mock without any app cooperation)
+   requires an LD_PRELOAD / DYLD_INSERT_LIBRARIES shim or a Linux
+   bind-mount overlay — both on the roadmap.
 
 ## Roadmap
 
@@ -340,9 +364,11 @@ Shipping honestly so nobody gets surprised:
 - [x] `--timeout` flag for wall-clock kills
 - [x] `PR_SET_NO_NEW_PRIVS` on Linux (defense-in-depth for seccomp)
 - [x] Profile signing (minisign verify before apply)
-- [ ] Linux per-IP outbound via nftables in the netns
-- [ ] Mock mode (materialized file overlay for "pretend this path exists")
-- [ ] Containerised Linux integration tests in CI
+- [x] Mock mode v1 (content sidecar via `$SANDKASTEN_MOCKS`)
+- [x] End-to-end sandbox smoke test on Linux CI
+- [x] Linux per-IP outbound via nftables inside the netns
+- [ ] Bundled `pasta` / `slirp4netns` integration for turnkey outbound
+- [ ] Transparent mock interposition via LD_PRELOAD / DYLD_INSERT_LIBRARIES
 - [ ] Homebrew tap
 
 ## License

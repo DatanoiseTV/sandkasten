@@ -28,6 +28,26 @@ pub struct Profile {
     pub env: Env,
     #[serde(default)]
     pub limits: Limits,
+    #[serde(default)]
+    pub mocks: Mocks,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mocks {
+    /// Virtual file-name → file content map. Each entry is materialized to a
+    /// private tempdir before the sandbox is applied. The tempdir's absolute
+    /// path is exposed to the sandboxed process via the `SANDKASTEN_MOCKS`
+    /// environment variable, so mock-aware callers (test harnesses, shims,
+    /// anything that can consult an env var) can read fake content without
+    /// touching the real filesystem.
+    ///
+    /// NOTE: this is a v1 content-sidecar mechanism. True transparent
+    /// path-interposition (so a program opening `/etc/hostname` reads the
+    /// mock) requires a DYLD_INSERT_LIBRARIES / LD_PRELOAD shim or a
+    /// bind-mount overlay, both planned but not yet implemented.
+    #[serde(default)]
+    pub files: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -385,6 +405,11 @@ impl Profile {
         out.env.pass_all |= self.env.pass_all;
         extend(&mut out.env.pass, self.env.pass);
         out.env.set.extend(self.env.set);
+
+        // Mocks: child overrides parent on key collision.
+        for (k, v) in self.mocks.files {
+            out.mocks.files.insert(k, v);
+        }
 
         // Limits — child's scalar wins for each field. `min` semantics
         // would be safer, but users explicitly extending a parent usually

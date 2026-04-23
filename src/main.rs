@@ -22,6 +22,7 @@ mod learn_core;
 mod limits;
 #[macro_use]
 mod log;
+mod mocks;
 mod signing;
 mod templates;
 mod ui;
@@ -70,6 +71,21 @@ fn run(args: cli::Cli) -> Result<i32> {
             if let Some(t) = timeout.as_deref() {
                 prof.limits.wall_timeout_seconds = Some(parse_duration_seconds(t)?);
             }
+
+            // Materialise any [mocks.files] into a tempdir. Also adds that
+            // dir to the profile's read set so the sandbox permits reads.
+            let mock_handle = mocks::materialise(&mut prof)?;
+            if let Some(m) = &mock_handle {
+                prof.env
+                    .set
+                    .insert(m.env_var.0.clone(), m.env_var.1.clone());
+                log::info(format_args!(
+                    "mocks materialised at {} ({} files)",
+                    m.dir.display(),
+                    prof.mocks.files.len()
+                ));
+            }
+
             log::info(format_args!(
                 "profile={:?} cwd={} target={}",
                 prof.name.as_deref().unwrap_or("?"),
@@ -77,7 +93,11 @@ fn run(args: cli::Cli) -> Result<i32> {
                 argv.first().map_or("?", String::as_str),
             ));
             log::print_summary(&prof);
-            run_sandboxed(&prof, cwd.as_deref(), &argv)
+            let rc = run_sandboxed(&prof, cwd.as_deref(), &argv);
+            if let Some(m) = mock_handle {
+                let _ = std::fs::remove_dir_all(&m.dir);
+            }
+            rc
         }
         cli::Command::Init { template, output } => {
             let body = templates::builtin(&template)

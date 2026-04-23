@@ -92,6 +92,14 @@ fn child_main(
         bring_up_loopback().context("bringing up lo")?;
     }
 
+    // Apply nftables allowlist inside the netns (if we actually created
+    // one and the profile has per-host rules). Does nothing silently when
+    // nft isn't installed.
+    if net.unshare_net {
+        crate::linux::nftables::apply_if_relevant(&profile.network)
+            .context("applying nftables rules")?;
+    }
+
     if let Some(c) = cwd {
         if unsafe { libc::chdir(c.as_ptr()) } != 0 {
             return Err(std::io::Error::last_os_error()).context("chdir");

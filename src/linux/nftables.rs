@@ -1,0 +1,178 @@
+//! Per-IP outbound filtering via nftables, applied inside the netns.
+//!
+//! Invariants assumed by the caller:
+//!
+//! * This function runs **inside the forked child**, after `unshare` has
+//!   placed the process in a private netns but before Landlock + seccomp.
+//! * `/sbin/nft` or `/usr/sbin/nft` (or `nft` on `$PATH`) exists. When it
+//!   doesn't, we print a warning and return `Ok(())` — the netns by itself
+//!   is already a hard outbound barrier.
+//! * The process holds `CAP_NET_ADMIN` in the current user namespace
+//!   (granted by our `CLONE_NEWUSER`).
+//!
+//! Rule shape:
+//!
+//! ```text
+//! table inet sandkasten {
+//!   chain output {
+//!     type filter hook output priority 0; policy drop;
+//!     oif lo accept
+//!     ct state established,related accept
+//!     # allow_dns
+//!     udp dport 53 accept
+//!     tcp dport 53 accept
+//!     # allow_icmp
+//!     ip protocol icmp accept
+//!     # outbound_tcp entries
+//!     ip  daddr 1.2.3.4 tcp dport 443 accept
+//!     ip6 daddr 2001:db8::/128 tcp dport 443 accept
+//!   }
+//! }
+//! ```
+//!
+//! External connectivity into the netns is a separate concern —
+//! sandkasten does not create veth / set up pasta. Users wanting real
+//! outbound traffic with per-IP filtering run the sandbox inside an
+//! already-plumbed netns (pasta, slirp4netns, rootless network providers),
+//! and these rules then enforce the policy.
+
+use crate::config::{HostSpec, Network, PortSpec};
+use anyhow::{anyhow, Context, Result};
+use std::io::Write as _;
+use std::process::{Command, Stdio};
+
+pub fn apply_if_relevant(net: &Network) -> Result<()> {
+    let has_allowlist = !net.outbound_tcp.is_empty()
+        || !net.outbound_udp.is_empty()
+        || net.allow_dns
+        || net.allow_icmp
+        || net.allow_icmpv6;
+    if !has_allowlist {
+        // Nothing to enforce beyond what the netns already denies.
+        return Ok(());
+    }
+
+    let Some(nft) = which("nft") else {
+        eprintln!(
+            "sandkasten ⚠ nftables: `nft` not found on $PATH — per-IP outbound \
+             rules are not applied. (The private netns still blocks all outbound \
+             traffic unless you've set up pasta/slirp4netns.)"
+        );
+        return Ok(());
+    };
+
+    let ruleset = render_ruleset(net)?;
+    let mut child = Command::new(&nft)
+        .arg("-f")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawning {}", nft.display()))?;
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("nft stdin not captured"))?;
+        stdin.write_all(ruleset.as_bytes())?;
+    }
+    let out = child.wait_with_output().context("waiting for nft")?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "nft load failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+fn render_ruleset(net: &Network) -> Result<String> {
+    let mut rules = String::new();
+    rules.push_str("table inet sandkasten {\n");
+    rules.push_str("    chain output {\n");
+    rules.push_str("        type filter hook output priority 0; policy drop;\n");
+    rules.push_str("        oif lo accept\n");
+    rules.push_str("        ct state established,related accept\n");
+
+    if net.allow_dns {
+        rules.push_str("        udp dport 53 accept\n");
+        rules.push_str("        tcp dport 53 accept\n");
+    }
+    if net.allow_icmp {
+        rules.push_str("        ip protocol icmp accept\n");
+    }
+    if net.allow_icmpv6 {
+        rules.push_str("        ip6 nexthdr icmpv6 accept\n");
+    }
+    for ep in &net.outbound_tcp {
+        emit_host_port(&mut rules, "tcp", ep)?;
+    }
+    for ep in &net.outbound_udp {
+        emit_host_port(&mut rules, "udp", ep)?;
+    }
+
+    rules.push_str("    }\n");
+    rules.push_str("}\n");
+    Ok(rules)
+}
+
+fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()> {
+    let e = crate::config::parse_endpoint(endpoint)
+        .with_context(|| format!("parse endpoint {endpoint}"))?;
+    let port_clause = match e.port {
+        PortSpec::Any => String::new(),
+        PortSpec::Num(n) => format!(" {proto} dport {n}"),
+    };
+    match e.host {
+        HostSpec::Any => {
+            rules.push_str(&format!("        {proto}{port_clause} accept\n"));
+        }
+        HostSpec::Ipv4(v4) => {
+            rules.push_str(&format!("        ip daddr {v4}{port_clause} accept\n"));
+        }
+        HostSpec::Ipv6(v6) => {
+            rules.push_str(&format!("        ip6 daddr {v6}{port_clause} accept\n"));
+        }
+        HostSpec::Name(n) => {
+            // nftables does not resolve hostnames at rule-load time.
+            // Best-effort: resolve to every A/AAAA record and emit rules for
+            // all of them. If resolution fails, emit a comment noting the
+            // skip — the caller still sees deny-by-default for that host.
+            match std::net::ToSocketAddrs::to_socket_addrs(&format!("{n}:0")) {
+                Ok(addrs) => {
+                    for a in addrs {
+                        match a {
+                            std::net::SocketAddr::V4(v) => rules.push_str(&format!(
+                                "        ip daddr {}{port_clause} accept  # {n}\n",
+                                v.ip()
+                            )),
+                            std::net::SocketAddr::V6(v) => rules.push_str(&format!(
+                                "        ip6 daddr {}{port_clause} accept  # {n}\n",
+                                v.ip()
+                            )),
+                        }
+                    }
+                }
+                Err(_) => {
+                    rules.push_str(&format!(
+                        "        # could not resolve {n} — rule skipped\n"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn which(bin: &str) -> Option<std::path::PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let p = dir.join(bin);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
