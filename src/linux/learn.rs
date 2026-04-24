@@ -91,7 +91,7 @@ fn parse_strace_line(raw: &str) -> Option<Op> {
     // Strip "[pid NNNN] " or "NNNN " prefix from -f output.
     let line = raw
         .trim_start()
-        .trim_start_matches(|c: char| c == '[')
+        .trim_start_matches('[')
         .trim_start_matches("pid ")
         .trim_start();
     let line = match line.find(']') {
@@ -139,12 +139,10 @@ fn parse_strace_line(raw: &str) -> Option<Op> {
         "openat" | "open" | "access" | "faccessat" | "faccessat2" | "stat" | "lstat"
         | "fstatat" | "newfstatat" | "readlink" | "readlinkat" | "getxattr" | "lgetxattr"
         | "statx" => first_quoted_arg(args).map(|p| {
-            let is_write = sys == "openat" && args.contains("O_WRONLY")
-                || sys == "openat" && args.contains("O_RDWR")
-                || sys == "openat" && args.contains("O_CREAT")
-                || sys == "open" && args.contains("O_WRONLY")
-                || sys == "open" && args.contains("O_RDWR")
-                || sys == "open" && args.contains("O_CREAT");
+            let is_write = matches!(sys, "openat" | "open")
+                && (args.contains("O_WRONLY")
+                    || args.contains("O_RDWR")
+                    || args.contains("O_CREAT"));
             if is_write {
                 Op::FileWrite(PathBuf::from(p))
             } else if matches!(

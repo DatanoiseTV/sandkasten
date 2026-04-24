@@ -79,10 +79,10 @@ jobs:
           cp "${BIN}" "dist/${NAME}/sandkasten"
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${NAME}/"
 
-          # Shell completions — generated on the current host arch, so
-          # only build them on native runners.
-          if [[ "${{ matrix.target }}" == *-apple-darwin && "$(uname -m)" == "arm64" ]] ||
-             [[ "${{ matrix.target }}" == *-linux-gnu && "$(uname -m)" == "x86_64" ]]; then
+          # Shell completions — the binary runs as part of the build, so
+          # only generate them on a native runner (same arch + OS).
+          if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] ||
+             [[ "${{ matrix.target }}" == "x86_64-unknown-linux-gnu" && "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
             mkdir -p "dist/${NAME}/completions"
             "${BIN}" completions bash > "dist/${NAME}/completions/sandkasten.bash"
             "${BIN}" completions zsh  > "dist/${NAME}/completions/_sandkasten"

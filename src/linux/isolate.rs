@@ -71,6 +71,8 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
     };
 
     // Fork — child becomes PID 1 in the new PID namespace.
+    // SAFETY: immediately after fork the child runs only async-signal-safe code
+    // (_exit on failure, execve on success); no allocators/TLS destructors run.
     match unsafe { fork() }.context("fork")? {
         ForkResult::Child => {
             let rc = child_main(
@@ -137,6 +139,7 @@ fn child_main(
     apply_overlayfs(profile).context("setting up overlayfs")?;
 
     if let Some(c) = cwd {
+        // SAFETY: c is a valid NUL-terminated C string held alive by the caller.
         if unsafe { libc::chdir(c.as_ptr()) } != 0 {
             return Err(std::io::Error::last_os_error()).context("chdir");
         }
@@ -510,11 +513,14 @@ fn bring_up_loopback() -> Result<()> {
         ifr_flags: libc::c_short,
         _pad: [u8; 22],
     }
+    // SAFETY: Ifreq is a C-repr POD (arrays + integer); all-zero is valid.
     let mut req: Ifreq = unsafe { std::mem::zeroed() };
     let name = b"lo\0";
     req.ifr_name[..name.len()].copy_from_slice(name);
     req.ifr_flags = (libc::IFF_UP | libc::IFF_RUNNING) as libc::c_short;
 
+    // SAFETY: sock is an owned open socket; &req points to a fully-initialised
+    // Ifreq that matches the SIOCSIFFLAGS ioctl contract.
     let rc = unsafe { libc::ioctl(sock.as_raw_fd(), libc::SIOCSIFFLAGS, &req) };
     if rc < 0 {
         return Err(std::io::Error::last_os_error()).context("ioctl SIOCSIFFLAGS lo");

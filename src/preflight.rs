@@ -99,7 +99,7 @@ fn check_proc(path: &str) -> Finding {
         return Finding {
             check: label.leak_static(),
             status: Status::Ok,
-            hint: format!("(sysctl not present — default-on kernel)"),
+            hint: "(sysctl not present — default-on kernel)".to_string(),
         };
     }
     Finding {
@@ -115,11 +115,11 @@ fn check_proc(path: &str) -> Finding {
 #[cfg(target_os = "linux")]
 fn check_tool(bin: &str, reason: &'static str, install: String) -> Finding {
     let found = which_static(bin);
-    if found.is_some() {
+    if let Some(path) = found {
         Finding {
             check: bin_static(bin),
             status: Status::Ok,
-            hint: format!("{}", found.unwrap().display()),
+            hint: path.display().to_string(),
         }
     } else {
         Finding {

@@ -41,6 +41,7 @@ fn add_rw_file(p: &mut Profile, path: &str) {
         p.filesystem.read_write_files.push(path.to_string());
     }
 }
+#[cfg(target_os = "macos")]
 fn add_mach(p: &mut Profile, svc: &str) {
     if !p.system.mach_services.iter().any(|x| x == svc) {
         p.system.mach_services.push(svc.to_string());
@@ -256,10 +257,10 @@ fn apply_video_controls(p: &mut Profile) {
                         continue;
                     }
                     let full = format!("/dev/{name_s}");
-                    if !allow.iter().any(|d| d == &full) {
-                        if !p.filesystem.hide.iter().any(|x| x == &full) {
-                            p.filesystem.hide.push(full);
-                        }
+                    if !allow.iter().any(|d| d == &full)
+                        && !p.filesystem.hide.iter().any(|x| x == &full)
+                    {
+                        p.filesystem.hide.push(full);
                     }
                 }
             }

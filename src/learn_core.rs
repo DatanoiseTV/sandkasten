@@ -15,6 +15,10 @@ pub struct Options {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// Several variants are only produced by the macOS learn backend (Mach/IOKit
+// have no Linux equivalent). Keep the cross-platform shape so both backends
+// emit the same analyzer type.
+#[allow(dead_code)]
 pub enum Op {
     FileRead(PathBuf),
     FileReadMeta(PathBuf),

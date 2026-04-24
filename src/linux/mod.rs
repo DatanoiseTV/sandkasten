@@ -116,8 +116,12 @@ pub(crate) fn install_alarm_watchdog(child: nix::unistd::Pid, secs: u64) {
 pub(crate) fn install_signal_forwarders(child: nix::unistd::Pid) {
     CHILD_PID.store(child.as_raw(), Ordering::SeqCst);
     for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+        // SAFETY: sigaction is a C-repr POD; all-zero is the documented
+        // "default handler" representation.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-        action.sa_sigaction = forward_signal as usize;
+        action.sa_sigaction = forward_signal as *const () as usize;
+        // SAFETY: &action is a valid sigaction pointer; forward_signal has
+        // the signature expected by sa_sigaction (extern "C" fn).
         unsafe {
             libc::sigaction(sig, &action, std::ptr::null_mut());
         }
