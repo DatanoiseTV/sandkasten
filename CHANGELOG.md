@@ -1,5 +1,116 @@
 # Changelog
 
+## v0.3.1 — 2026-04-24
+
+Parity pass: the Linux backend now reaches the same "works out of the
+box" state the macOS backend has. Four distinct bugs were surfaced by
+dogfooding a fresh install on Debian trixie (kernel 6.12, Landlock ABI v6)
+against the same matrix that was passing on macOS.
+
+### Landlock
+
+- **Execute bit was missing from the `read` access set.** `AccessFs::from_read`
+  covers `ReadFile` + `ReadDir` only — it does NOT include `Execute`. Every
+  invocation of a binary whose directory was only on `read` (e.g.
+  `/usr/bin/true` under `strict`) therefore died with `EACCES` at the
+  initial `execve()`. Fixed by unioning `AccessFs::Execute` into the read
+  access mask.
+- **Initial `execve` wasn't guaranteed reachable.** Matched the macOS
+  one-shot `process-exec` literal grant by implicitly adding the target
+  binary's parent directory to the Landlock allow-list. Without this, any
+  template that doesn't explicitly list the target's bin directory
+  (`strict` on Linux) bricks its own entry point.
+- **"Deny cannot be enforced" warning was spammed 15 times per run.**
+  Templates like `self` with `read = ["/"]` triggered the warning once per
+  read path × once per deny path intersection. Consolidated to a single
+  informational line and downgraded from default to `-v` (Info) so a
+  normal invocation stays silent.
+
+### Network
+
+- **Private-netns+nftables with no external plumbing was the default for
+  `network-client` and `dev`.** A private Linux netns has no route to the
+  internet without `pasta`/`slirp4netns`/a prepared veth pair, so every
+  outbound lookup failed with `EAI_AGAIN` or `network unreachable`.
+  Matched the macOS behaviour (shared host network stack) by defaulting to
+  the host netns for outbound-only profiles. Per-IP nftables filtering is
+  therefore not enforced in that mode (kernel-wide rules would hit the
+  host globally) — the `render` output says so explicitly and points users
+  at `[network.netns_path]` for bring-your-own-isolation.
+
+### Templates
+
+- `dev`: add `${CWD}` to `read_write`. `git clone`, `npm install`,
+  `cargo build`, and every other "work in this directory" flow needs it
+  and the template was previously only granting `/tmp` + `~/.cache`.
+
+### Verified end-to-end on Linux
+
+`self`/`strict`/`minimal-cli`/`network-client`/`dev` each run the matrix
+that was passing on macOS: `cat`, `ls`, `wc`, `awk`, `python -c`, `bash`,
+`curl https://ipinfo.io/ip`, `dig ipinfo.io`, `git clone https://...`.
+`process.block_privilege_elevation` correctly makes `sudo`/`su` fail in
+both platforms (on Linux by way of the userns UID remap + seccomp setid
+denies).
+
+## v0.3.0 — 2026-04-24
+
+### New: privilege-elevation + setuid/setgid guardrails
+
+Two new cross-platform profile flags under `[process]`:
+
+- `block_privilege_elevation = true` — denies exec of the classic
+  escalation binaries on both macOS and Linux. The binary list covers
+  the standard *nix system paths (`/usr/bin/sudo`, `/usr/bin/su`,
+  `/bin/su`, `/usr/bin/doas`, `/usr/bin/pkexec`, `/usr/bin/runuser`,
+  `/usr/sbin/visudo`, `/usr/libexec/doas`), the common package-manager
+  installs (Homebrew, Linuxbrew, Snap), and `/usr/local/bin/...` for
+  locally-compiled builds. Useful specifically when the host user has
+  `NOPASSWD: ALL` in sudoers or cached credentials — without it, a
+  compromised sandboxed tool could re-exec through `sudo` and end up
+  running as host-root before the user notices. Implies
+  `block_setid_syscalls`.
+
+- `block_setid_syscalls = true` — seccomp-denies the setuid-family
+  syscalls (`setuid`, `setgid`, `setreuid`, `setregid`, `setresuid`,
+  `setresgid`, `setfsuid`, `setfsgid`, `setgroups`) on Linux, so even
+  shellcode that skips the elevation binary and calls the syscall
+  directly gets `EPERM`. Linux-only; macOS already prevents the
+  sandboxed process from honouring setuid bits at the kernel MAC
+  layer.
+
+Under the hood:
+- **macOS:** emits `(deny process-exec (literal "/usr/bin/sudo"))` and
+  friends in the generated SBPL. Seatbelt already refuses to honour
+  setuid inside the sandbox, but the explicit deny makes the policy
+  discoverable instead of hidden in kernel-level MAC behaviour.
+- **Linux:** binary-level denial follows naturally from the Landlock
+  allow-list (the elevation binaries aren't normally on it); the new
+  seccomp filter is the real enforcement, and fires even on profiles
+  that *do* grant a broad exec subtree.
+
+Both flags default to `false` (no behaviour change in existing
+profiles). Turn them on in any profile that runs user-supplied code.
+
+### Template fixes (from continued dogfood pass)
+
+- `strict`: allow read on `/Library/Developer/CommandLineTools` and
+  `/Applications/Xcode.app` so Apple's xcrun-shim binaries
+  (`/usr/bin/git`, `/usr/bin/python3`, `/usr/bin/clang`, …) can find
+  and re-exec the real tool.
+- `minimal-cli`: grant read on `${CWD}` so the advertised use case
+  (`awk` / `sed` / `sort` / `wc` / `grep <file-in-cwd>`) actually
+  works. Writes stay denied.
+- `network-client`: grant `read_write` on `/private/var/folders`
+  (macOS `$TMPDIR`) and `/tmp` so xcrun can cache its database —
+  without this every xcrun-shim binary fails with "couldn't create
+  cache file" before it ever reaches the network.
+- `dev`: add the `web` + `ssh` presets so `git clone`, `npm install`,
+  `pip install`, `cargo fetch` etc. can actually reach the network
+  without the user having to hand-extend the profile. The description
+  previously claimed "localhost network" which was literally true
+  and quietly catastrophic.
+
 ## v0.2.2 — 2026-04-24
 
 One-line follow-up to v0.2.1: `allow_unix_sockets` now also grants

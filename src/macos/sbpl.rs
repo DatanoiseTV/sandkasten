@@ -332,6 +332,26 @@ pub fn generate_for_target(p: &Profile, target: Option<&str>) -> String {
             let _ = writeln!(s, "(deny file-read* file-write* (subpath {}))", quote(path));
         }
     }
+
+    // --- privilege-elevation block ----------------------------------------
+    // Deny exec of sudo/su/doas/pkexec/etc. so a compromised sandboxed
+    // process can't re-exec through the elevation path — even on hosts
+    // where the user has `NOPASSWD: ALL` sudoers entries and cached
+    // credentials would make the escalation silent. Defense in depth: on
+    // macOS the sandbox also makes the escalated process inherit the
+    // sandbox, but SUID bits can change process attributes in ways we'd
+    // rather not validate case-by-case.
+    if p.process.block_privilege_elevation {
+        s.push_str(";; --- block privilege elevation (sudo/su/doas/...) ---\n");
+        for bin in crate::config::PRIVILEGE_ELEVATION_BINARIES {
+            let _ = writeln!(s, "(deny process-exec (literal {}))", quote(bin));
+            let _ = writeln!(
+                s,
+                "(deny process-exec-interpreter (literal {}))",
+                quote(bin)
+            );
+        }
+    }
     if !p.filesystem.hide.is_empty() {
         s.push_str(";; --- hide paths (macOS best-effort — returns EPERM, not ENOENT) ---\n");
         for path in &p.filesystem.hide {
@@ -576,6 +596,22 @@ mod tests {
         assert!(s.contains("(allow file-read* (literal \"/private/etc/hosts\"))"));
         assert!(s.contains("(allow file-read* (literal \"/var/run/resolv.conf\"))"));
         assert!(s.contains("(allow file-read* (literal \"/private/var/run/resolv.conf\"))"));
+    }
+
+    #[test]
+    fn block_privilege_elevation_emits_exec_denies() {
+        let mut p = Profile::default();
+        p.process.block_privilege_elevation = true;
+        let s = generate(&p);
+        assert!(s.contains("(deny process-exec (literal \"/usr/bin/sudo\"))"));
+        assert!(s.contains("(deny process-exec (literal \"/usr/bin/su\"))"));
+        assert!(s.contains("(deny process-exec (literal \"/bin/su\"))"));
+        assert!(s.contains("(deny process-exec (literal \"/usr/bin/doas\"))"));
+        assert!(s.contains("(deny process-exec (literal \"/usr/bin/pkexec\"))"));
+        // And not when the flag is off.
+        let off = Profile::default();
+        let s2 = generate(&off);
+        assert!(!s2.contains("(deny process-exec (literal \"/usr/bin/sudo\"))"));
     }
 
     #[test]

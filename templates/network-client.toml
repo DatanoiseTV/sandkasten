@@ -17,6 +17,18 @@ read = [
 read_files = [
     "/var/run/resolv.conf",
 ]
+# Writable tempdir. `/usr/bin/{git,python3,curl,...}` on macOS are
+# xcrun stubs that write a cache file to $TMPDIR (xcrun_db-*) before
+# they'll exec the real tool — without this, every Apple-shimmed
+# binary fails with "couldn't create cache file". On Linux most DNS
+# resolvers and TLS caches also want a tempdir. /private/var/folders
+# is macOS's per-user $TMPDIR root; /tmp is the Linux (and BSD)
+# fallback. Keeping this inside network-client — not strict — so
+# minimal-cli users retain their full read-only guarantee.
+read_write = [
+    "/private/var/folders",
+    "/tmp",
+]
 
 [network]
 allow_dns = true

@@ -1,5 +1,5 @@
 name = "dev"
-description = "Permissive development sandbox. Read FS, write to CWD + tmp, localhost network."
+description = "Permissive development sandbox. Read FS, write to CWD + tmp, HTTPS/SSH/DNS + localhost network."
 extends = "minimal-cli"
 
 [filesystem]
@@ -8,6 +8,10 @@ read = [
     "/",
 ]
 read_write = [
+    # CWD — the most common dev use case is "clone/build/edit in this
+    # directory". Without CWD here, `git clone`, `npm install`,
+    # `cargo build`, etc. all fail at the first write.
+    "${CWD}",
     "/tmp",
     "/private/tmp",
     "/private/var/folders",
@@ -27,6 +31,12 @@ allow_localhost = true
 allow_dns = true
 allow_inbound = true
 allow_unix_sockets = true
+# A "dev sandbox" with no outbound was only useful for fully offline
+# work. In practice every dev flow does at least one of: git clone over
+# HTTPS, npm/pip/cargo pulling packages, curl to an API. Include the
+# standard web + ssh presets so `sandkasten run dev -- ...` can do
+# ordinary dev work without the user having to hand-extend the profile.
+presets = ["web", "ssh"]
 
 [system]
 allow_iokit = true

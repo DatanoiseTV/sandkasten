@@ -534,7 +534,81 @@ pub struct Process {
     /// Allow signalling of sandboxed siblings/children. Signalling outside is always denied.
     #[serde(default = "default_true")]
     pub allow_signal_self: bool,
+
+    /// Block exec of classic privilege-elevation binaries (sudo, su, doas,
+    /// pkexec, etc.) from inside the sandbox. Useful as a guardrail against
+    /// users who have `NOPASSWD: ALL` sudoers entries or similar: even a
+    /// compromised tool running in the sandbox can't re-exec through sudo
+    /// to regain root on the host. Defense-in-depth; namespaces on Linux
+    /// already neuter privilege elevation for the sandboxed process, but
+    /// denying the exec outright prevents social-engineering-style abuse
+    /// (e.g. a script that calls sudo and expects the host's cached creds).
+    /// Implies `block_setid_syscalls`.
+    #[serde(default)]
+    pub block_privilege_elevation: bool,
+
+    /// Block the setuid-family syscalls (`setuid`, `setgid`, `setreuid`,
+    /// `setregid`, `setresuid`, `setresgid`, `setfsuid`, `setfsgid`,
+    /// `setgroups`) via seccomp on Linux. Defense against shellcode that
+    /// tries to drop or gain privileges directly without going through a
+    /// named elevation binary.
+    ///
+    /// On Linux the `CLONE_NEWUSER` boundary already prevents real host
+    /// privilege changes, but blocking these outright also stops tools
+    /// from silently "succeeding" into an inner-namespace root mapping
+    /// that confuses downstream callers (e.g. `sudo` printing
+    /// `root@...#` and giving a root-looking shell inside the userns).
+    ///
+    /// macOS: no direct Seatbelt equivalent, so this flag is a Linux-only
+    /// defence. The SBPL policy on macOS already refuses to honour setuid
+    /// bits for sandboxed processes at the kernel MAC layer.
+    #[serde(default)]
+    pub block_setid_syscalls: bool,
 }
+
+impl Process {
+    /// Whether the setid-family seccomp filter should be installed.
+    /// Either a direct request or an implication of
+    /// [`Process::block_privilege_elevation`]. Currently only consulted
+    /// by the Linux seccomp backend; macOS has no direct Seatbelt
+    /// equivalent.
+    #[allow(dead_code)] // used only by src/linux/seccomp_filter.rs
+    pub fn blocks_setid(&self) -> bool {
+        self.block_setid_syscalls || self.block_privilege_elevation
+    }
+}
+
+/// Canonical path list for [`Process::block_privilege_elevation`].
+///
+/// Includes both macOS system locations (`/usr/bin/...`) and the common
+/// extra-install paths: Homebrew on macOS/arm, Intel Homebrew, user-local
+/// builds, Linux package-manager paths, Snap, and Linuxbrew. Expand with
+/// care — every entry here becomes a `deny process-exec` on macOS (and
+/// matters only if the binary exists, so extras are free defense).
+#[allow(dead_code)] // consumed only by the macOS SBPL generator today
+pub const PRIVILEGE_ELEVATION_BINARIES: &[&str] = &[
+    // Standard *nix system paths — present on both macOS (as Apple
+    // binaries) and on every Linux distro.
+    "/usr/bin/sudo",
+    "/usr/bin/sudoedit",
+    "/usr/bin/su",
+    "/bin/su",
+    "/usr/bin/doas",
+    "/usr/bin/pkexec",
+    "/usr/bin/runuser",
+    "/usr/sbin/visudo",
+    "/usr/libexec/doas",
+    // Locally-compiled installs on both platforms.
+    "/usr/local/bin/sudo",
+    "/usr/local/bin/doas",
+    "/usr/local/bin/su",
+    // Package-manager installs.
+    "/opt/homebrew/bin/sudo", // Homebrew on Apple Silicon
+    "/opt/homebrew/bin/doas",
+    "/home/linuxbrew/.linuxbrew/bin/sudo", // Linuxbrew on Linux
+    "/home/linuxbrew/.linuxbrew/bin/doas",
+    "/snap/bin/sudo", // Ubuntu Snap
+];
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -808,6 +882,10 @@ impl Profile {
         out.process.allow_fork |= self.process.allow_fork;
         out.process.allow_exec |= self.process.allow_exec;
         out.process.allow_signal_self |= self.process.allow_signal_self;
+        // block_* fields OR together so once any layer blocks it, the merged
+        // result blocks it (more-restrictive wins for security toggles).
+        out.process.block_privilege_elevation |= self.process.block_privilege_elevation;
+        out.process.block_setid_syscalls |= self.process.block_setid_syscalls;
 
         // System
         out.system.allow_sysctl_read |= self.system.allow_sysctl_read;
@@ -1289,6 +1367,17 @@ mod tests {
             exe_dir: Some(PathBuf::from("/opt/tool/bin")),
             home: Some(PathBuf::from("/home/alice")),
         }
+    }
+
+    #[test]
+    fn blocks_setid_tracks_both_flags() {
+        let mut p = Process::default();
+        assert!(!p.blocks_setid());
+        p.block_setid_syscalls = true;
+        assert!(p.blocks_setid());
+        p.block_setid_syscalls = false;
+        p.block_privilege_elevation = true;
+        assert!(p.blocks_setid(), "privilege-elevation must imply setid");
     }
 
     #[test]

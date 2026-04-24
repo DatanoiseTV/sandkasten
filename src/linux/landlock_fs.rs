@@ -19,15 +19,46 @@ pub struct Prepared {
 
 impl Prepared {
     pub fn from(p: &Profile) -> Result<Self> {
+        Self::for_target(p, None)
+    }
+
+    /// Like [`Self::from`], but when `target` is provided, the parent
+    /// directory of the target binary is implicitly added to the
+    /// Landlock allow-list with read + execute. This mirrors the macOS
+    /// side: sandkasten's own `execve()` of `argv[0]` must always
+    /// succeed regardless of how sparse the profile is, otherwise a
+    /// minimal template ("strict") bricks itself before it can reach
+    /// the sandboxed program's `main()`.
+    pub fn for_target(p: &Profile, target: Option<&str>) -> Result<Self> {
         let abi = ABI::V3;
         let access_all = AccessFs::from_all(abi);
-        let access_read = AccessFs::from_read(abi);
+        // `from_read` covers ReadFile + ReadDir but — importantly — does NOT
+        // include Execute. Without this, Landlock refuses every execve into
+        // a binary whose directory is only on `read` (e.g. `/usr/bin/true`
+        // under the `strict` template), and the very first `execve()` that
+        // sandkasten itself performs returns EACCES. `Execute` + read is
+        // the shape users expect of "read-only path": you can read it, you
+        // can list it, you can run a binary from it, but you can't write.
+        let access_read = AccessFs::from_read(abi) | AccessFs::Execute;
 
         // Compute effective read/read_write lists with `deny` enforcement by
         // subtree-pruning: any allow-path that is an ancestor of a deny-path is
         // dropped. We do NOT attempt to split a parent into its non-denied
         // children — users should specify narrower allows instead.
-        let (reads, writes) = prune(&p.filesystem);
+        let (mut reads, writes) = prune(&p.filesystem);
+
+        // Implicit read+exec grant for the target binary's parent
+        // directory (and the binary itself in case the parent is denied).
+        // Matches the macOS `(allow process-exec (literal "<target>"))`.
+        if let Some(t) = target {
+            let path = std::path::Path::new(t);
+            if let Some(parent) = path.parent() {
+                let parent_s = parent.to_string_lossy().into_owned();
+                if !reads.iter().any(|r| r == &parent_s) {
+                    reads.push(parent_s);
+                }
+            }
+        }
 
         if reads.is_empty() && writes.is_empty() {
             return Ok(Self { created: None });
@@ -101,23 +132,34 @@ fn prune(fs: &crate::config::Filesystem) -> (Vec<String>, Vec<String>) {
     let mut reads = Vec::new();
     let mut writes = Vec::new();
 
+    // Collect deny paths that are masked by an ancestor allow — they are
+    // the ones Landlock can't enforce. Emit a single consolidated warning
+    // at the end rather than once per read path (templates like `self`
+    // with `read = ["/"]` would otherwise spam 10+ lines per invocation).
+    let mut unenforceable_denies: Vec<String> = Vec::new();
     for p in &fs.read {
         if covered_by_deny(p) {
             continue;
         }
-        if has_deny_inside(p) {
-            eprintln!(
-                "sandkasten: WARNING — Linux cannot deny {:?} inside allowed read subtree {:?}; \
-                 use narrower allow paths instead.",
-                fs.deny
-                    .iter()
-                    .find(|d| is_ancestor(p, d))
-                    .map(String::as_str)
-                    .unwrap_or(""),
-                p
-            );
+        for d in &fs.deny {
+            if is_ancestor(p, d) && !unenforceable_denies.iter().any(|x| x == d) {
+                unenforceable_denies.push(d.clone());
+            }
         }
         reads.push(p.clone());
+    }
+    if !unenforceable_denies.is_empty() {
+        // Shown only at `-v` (Info) and above. A default run of a template
+        // like `self` would otherwise spam a 15-line paragraph on every
+        // invocation for information the user can't act on during a one-
+        // off execution.
+        crate::log::info(format_args!(
+            "Landlock is allow-list only, so these deny paths sit inside a \
+             broader allow and are NOT enforced on Linux (they ARE enforced \
+             on macOS): {}. Narrow the matching allow entry to exclude them \
+             if that matters.",
+            unenforceable_denies.join(", ")
+        ));
     }
     for p in &fs.read_write {
         if covered_by_deny(p) {

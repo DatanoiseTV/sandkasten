@@ -470,9 +470,25 @@ port = "*"
 
 # ── PROCESS / SYSTEM / ENV ──────────────────────────────────────────────
 [process]
-allow_fork        = true
-allow_exec        = true
-allow_signal_self = true
+allow_fork                 = true
+allow_exec                 = true
+allow_signal_self          = true
+# Block exec of sudo/su/doas/pkexec/runuser/visudo/sudoedit from inside
+# the sandbox. Useful when the host user has `NOPASSWD: ALL` sudoers or
+# cached credentials — without this, a compromised tool inside the
+# sandbox could re-exec through sudo and escape back to host-root. The
+# binary list covers the standard *nix paths (`/usr/bin/sudo`,
+# `/usr/sbin/visudo`, `/usr/libexec/doas`, …) and the common extras:
+# Homebrew (macOS), Linuxbrew and Snap (Linux), and `/usr/local/bin/…`
+# for locally-compiled installs. Implies `block_setid_syscalls`.
+block_privilege_elevation  = false
+# Block the setuid-family syscalls (setuid/setgid/setreuid/setregid/
+# setresuid/setresgid/setfsuid/setfsgid/setgroups) via seccomp on Linux.
+# Defense against shellcode that tries to change credentials directly
+# without invoking a named elevation binary. Linux-only; macOS is
+# already prevented from honouring setuid bits inside the sandbox at
+# the kernel MAC layer.
+block_setid_syscalls       = false
 
 [system]
 allow_sysctl_read = true

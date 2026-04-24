@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch};
 use std::collections::BTreeMap;
 
-pub fn install(_profile: &Profile) -> Result<()> {
+pub fn install(profile: &Profile) -> Result<()> {
     let arch = if cfg!(target_arch = "x86_64") {
         TargetArch::x86_64
     } else if cfg!(target_arch = "aarch64") {
@@ -112,6 +112,31 @@ pub fn install(_profile: &Profile) -> Result<()> {
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
     for &nr in blocked.iter().chain(extra_blocked.iter()) {
         rules.insert(nr, vec![]);
+    }
+
+    // Optional: block the setuid-family syscalls. Enabled either directly
+    // via `process.block_setid_syscalls` or transitively via
+    // `process.block_privilege_elevation` (which implies it). The userns
+    // boundary already makes these calls only affect the inner UID/GID
+    // mapping (not the host), but denying them outright is defense-in-
+    // depth — and importantly, makes sudo/su fail loudly instead of
+    // succeeding in the userns and leaving confused callers running with
+    // "root-looking" inner credentials.
+    if profile.process.blocks_setid() {
+        let setid: &[i64] = &[
+            libc::SYS_setuid,
+            libc::SYS_setgid,
+            libc::SYS_setreuid,
+            libc::SYS_setregid,
+            libc::SYS_setresuid,
+            libc::SYS_setresgid,
+            libc::SYS_setfsuid,
+            libc::SYS_setfsgid,
+            libc::SYS_setgroups,
+        ];
+        for &nr in setid {
+            rules.insert(nr, vec![]);
+        }
     }
 
     let filter = SeccompFilter::new(
