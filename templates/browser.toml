@@ -12,6 +12,7 @@ read_write = [
     "/tmp",
     "/private/tmp",
     "/private/var/folders",
+    # macOS Chromium-family profile dirs.
     "~/Library/Caches",
     "~/Library/Application Support/BraveSoftware",
     "~/Library/Application Support/Google",
@@ -24,9 +25,33 @@ read_write = [
     "~/Downloads",
     "~/Desktop",
     "~/Documents",
+    # Linux Chromium-family profile dirs + runtime sockets. Paths that
+    # don't exist on the current platform are silently skipped by both
+    # backends (Landlock `skipping read path …`; SBPL literal rules
+    # just never match).
+    "~/.config/google-chrome",
+    "~/.config/chromium",
+    "~/.config/BraveSoftware",
+    "~/.config/microsoft-edge",
+    "~/.cache/google-chrome",
+    "~/.cache/chromium",
+    "~/.cache/BraveSoftware",
+    "~/.cache/microsoft-edge",
+    "~/.pki",        # NSS cert DB (CA pinning, client certs)
+    "/dev/shm",      # Chromium IPC relies heavily on POSIX shared memory
+    "/dev/dri",      # GPU / DRM for hardware acceleration
+    # XDG runtime dir: Wayland / Pipewire / PulseAudio / DBus session
+    # bus sockets live here. ${XDG_RUNTIME_DIR} is not exported to the
+    # config layer yet — in practice it's always /run/user/$UID, but
+    # we grant the parent /run/user so whichever UID the process maps
+    # to works.
+    "/run/user",
 ]
 deny = [
     # Never readable by the browser — session credentials & secrets.
+    # Most of these are cross-platform; the macOS-specific Library
+    # entries don't exist on Linux and vice-versa, so both lists
+    # cohabit harmlessly.
     "~/.ssh",
     "~/.aws",
     "~/.config/gcloud",
@@ -35,16 +60,24 @@ deny = [
     "~/.kube",
     "~/.netrc",
     "~/.password-store",
+    "~/.bash_history",
+    "~/.zsh_history",
+    # macOS-specific.
     "~/Library/Keychains",
     "~/Library/Application Support/com.apple.TCC",
     "~/Library/Cookies",
     "~/Library/Mail",
     "~/Library/Messages",
-    "~/.bash_history",
-    "~/.zsh_history",
-    # Other browsers' profile dirs — don't let one browser peek at another.
     "~/Library/Application Support/Firefox",
     "~/Library/Safari",
+    # Linux-specific: don't let one Chromium peek at another browser's
+    # profile, and keep pass-manager + crypto stores off-limits.
+    "~/.mozilla",
+    "~/snap/firefox",
+    "~/.config/KeePass",
+    "~/.config/keepassxc",
+    "~/.config/syncthing",
+    "~/.local/share/keyrings",
 ]
 
 [network]

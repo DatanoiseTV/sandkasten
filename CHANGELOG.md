@@ -1,5 +1,103 @@
 # Changelog
 
+## v0.4.0 — 2026-04-25
+
+Security and UX parity between macOS and Linux is now the bar. This
+release closes the last visible gaps in that story, and adds
+opt-in anti-exploitation knobs that don't break anything by default.
+
+### Linux network — per-IP filtering restored
+
+- **Pasta auto-integration.** When the `pasta` binary (from `passt`) is
+  installed AND not AppArmor-confined, outbound-only profiles re-exec
+  under `pasta --config-net --runas $UID:$GID -- sandkasten …`. Result:
+  private netns with real external connectivity, AND `nftables` per-IP
+  rules apply safely inside pasta's netns (kernel-level rules don't
+  reach the host).
+- **slirp4netns fallback.** Debian/Ubuntu ship an AppArmor profile for
+  `passt` that restricts its `execve()` targets to `passt.avx2` only,
+  blocking our re-exec pattern. When that's detected (by the presence
+  of `/etc/apparmor.d/usr.bin.passt`), sandkasten transparently falls
+  through to a fork-before-unshare flow: the parent process writes the
+  child's uid/gid maps from outside the userns, spawns
+  `slirp4netns -c <pid> tap0 --disable-host-loopback`, and kicks the
+  child to continue. Same end state — private netns, real internet,
+  nftables enforced — just via a different plumber.
+- **Preference order** is now pasta → slirp4netns → host-netns fallback.
+  `sandkasten render <profile>` spells the chosen mode out explicitly;
+  the host-netns fallback label points users at either installing the
+  missing tool or using `[network.netns_path]` for BYO isolation.
+
+End-to-end on Debian trixie: `curl https://ipinfo.io/ip` under
+`network-client` returns the IP; `curl https://github.com:22` (port
+not in `outbound_tcp`) times out with `ECONNREFUSED`/timeout — proving
+the filter is real.
+
+### Anti-exploitation guardrails
+
+Three new controls for `[process]`. Each is documented with its trade-off
+so it's clear why it's a default-off or always-on knob.
+
+- **TIOCSTI ioctl block** (always on, no flag). Seccomp arg-1
+  conditional rule denies the `ioctl(_, TIOCSTI, …)` syscall — the
+  classic "inject keystrokes into parent's controlling TTY"
+  container-escape primitive. No legitimate sandboxed use; zero
+  breakage risk.
+- **`process.no_w_x = true`** (opt-in). Applies
+  `prctl(PR_SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN)` — forbids
+  `mprotect(..., PROT_EXEC)` on any page that was ever writable.
+  Neutralises the "write shellcode, flip to executable, jump"
+  exploit class. **Breaks JITs** (V8, LuaJIT, Java HotSpot, PHP JIT,
+  …), which is why it's opt-in. Requires Linux 6.3+.
+- **`process.mitigate_spectre = true`** (opt-in). Applies
+  `prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_INDIRECT_BRANCH,
+  PR_SPEC_FORCE_DISABLE)` and the same for `PR_SPEC_STORE_BYPASS`.
+  Force-disables Spectre v2 + v4 speculation for the sandboxed
+  process so it can't be a Spectre gadget reachable from the host.
+  Costs ~2-5% CPU on branch-heavy workloads. Non-fatal on kernels
+  or CPUs that don't support either control.
+
+### Templates
+
+- **`browser` now works on Linux too.** Added Chromium-family Linux
+  profile/cache dirs (`~/.config/{google-chrome,chromium,BraveSoftware,
+  microsoft-edge}`, mirror cache paths), NSS cert DB (`~/.pki`),
+  `/dev/shm` (Chromium IPC), `/dev/dri` (GPU), and `/run/user`
+  (Wayland/Pipewire/Pulse/DBus sockets). Deny list gained the Linux
+  crypto/pass-manager stores (`~/.mozilla`, `~/snap/firefox`,
+  `~/.config/KeePass*`, `~/.local/share/keyrings`). Paths that
+  don't exist on the current platform are silently skipped by both
+  backends.
+- **`electron` grants `~/Library/Application Support` write** (macOS).
+  Every Electron app dumps its runtime state under
+  `~/Library/Application Support/<AppName>/`; without write there,
+  every first-boot `mkdir … /logs/…` failed with EPERM before the
+  app reached `main()`.
+
+### CI
+
+- **linux-smoke now actually runs.** Moved from `ubuntu-latest`
+  (24.04 with the `unprivileged_userns` AppArmor profile that blocks
+  `/proc/self/setgroups`) to `ubuntu-22.04` + defensive `aa-teardown`
+  and `kernel.apparmor_restrict_unprivileged_userns=0` if a future
+  image brings the profile back. The step now executes a real
+  `sandkasten run self -- /bin/cat …` end-to-end on every push,
+  rather than failing before sandkasten could execute its first line.
+
+### Housekeeping
+
+- `sandkasten snap save/load/list` accepts a TOML file path
+  (derived snapshot key from the profile's `name` field).
+- Overlay profiles auto-add `overlay.upper` + `overlay.mount` to
+  `filesystem.read_write`.
+- `sandkasten learn --yes` / `-y` for non-interactive capture.
+- macOS `learn` now emits a clear error when
+  `(trace …)` silently no-ops on macOS 14+ (the directive requires
+  a private entitlement third-party binaries can't claim).
+- 6 Dependabot dep bumps merged (`nix` 0.29→0.31, `thiserror` 1→2,
+  `toml` 0.8→1.1, `dirs` 5→6, `seccompiler` 0.4→0.5, GitHub
+  actions group to latest v6/v7/v8).
+
 ## v0.3.2 — 2026-04-24
 
 Follow-up fixes surfaced by dogfooding the workspace/overlay/snap

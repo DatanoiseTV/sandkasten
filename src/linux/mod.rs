@@ -8,18 +8,37 @@
 //!   `read` / `read_write` subtree before the Landlock ruleset is built.
 //!   (macOS supports true deny-overrides via SBPL last-match-wins.)
 //!
-//! * Network: an unprivileged user namespace lets us create a private netns with
-//!   only `lo`. We support three effective modes:
-//!     - no network (default)
-//!     - localhost-only (`allow_localhost = true`)
-//!     - host network (if neither of the above nor any explicit rule is set
-//!       AND `allow_inbound` or any outbound rule is present — we inherit
-//!       the parent netns rather than isolate. v1 does not implement
-//!       per-IP outbound filtering on Linux; it's kernel-enforced on macOS.)
+//! * Network: an unprivileged user namespace lets us create a private netns.
+//!   The effective mode is picked in [`net_mode`] based on profile intent +
+//!   what's installed on the host:
+//!     - `NetKind::PrivateNetns` — no network, or localhost-only if
+//!       `allow_localhost = true`.
+//!     - `NetKind::PastaWrap` — outbound-only profile, pasta (from passt)
+//!       is installed and not AppArmor-confined. Re-exec under
+//!       `pasta --config-net -- sandkasten …`. Per-IP `nftables`
+//!       filtering is enforced inside pasta's netns where kernel-wide
+//!       rules don't affect the host.
+//!     - `NetKind::Slirp4netnsWrap` — outbound-only profile, pasta unusable
+//!       (Debian/Ubuntu's AppArmor profile blocks our re-exec pattern)
+//!       but `slirp4netns` is installed. Fork-before-unshare flow: parent
+//!       writes the child's uid/gid maps from outside the userns, spawns
+//!       `slirp4netns -c <pid> tap0 --disable-host-loopback`, child
+//!       continues the normal post-ns setup. `nftables` applies inside
+//!       the plumbed netns, same guarantee as pasta.
+//!     - `NetKind::ExternalNetns` — `setns()` into an existing netns (e.g.
+//!       one set up by the user with `ip netns add vpn; ip netns exec vpn
+//!       wg-quick up wg0`; pointed at via `[network.netns_path]`).
+//!     - `NetKind::HostShared` — fallback when neither pasta nor
+//!       slirp4netns is available, or `external = "host"`, or an inbound
+//!       listener is configured. In this mode nftables rules are NOT
+//!       applied (they'd affect the host globally); `render` flags the
+//!       degradation explicitly.
 //!
 //! * Seccomp: deny-list of kernel-admin and introspection syscalls
-//!   (ptrace, bpf, kexec, module ops, mount, pivot_root, etc.). Process
-//!   isolation remains primarily a namespace property.
+//!   (ptrace, bpf, kexec, module ops, mount, pivot_root, etc.), plus the
+//!   conditional TIOCSTI-via-ioctl block. Optional `process.block_setid_syscalls`
+//!   denies the full setuid/setgid family. Process isolation remains
+//!   primarily a namespace property.
 
 mod isolate;
 pub(crate) mod landlock_fs;
