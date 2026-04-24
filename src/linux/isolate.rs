@@ -62,8 +62,11 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
     let resolved = resolve_program(&prog, &envp_vec)?;
 
     // Prepare Landlock ruleset inputs (PathFds must be opened before seccomp
-    // and before we chdir into possibly restricted locations).
-    let lock = crate::linux::landlock_fs::Prepared::from(profile)?;
+    // and before we chdir into possibly restricted locations). Thread the
+    // resolved target path through so the initial `execve()` is always
+    // permitted, matching the macOS one-shot process-exec grant.
+    let target_str = resolved.to_string_lossy();
+    let lock = crate::linux::landlock_fs::Prepared::for_target(profile, Some(&target_str))?;
 
     let cwd_c = match cwd {
         Some(p) => Some(CString::new(p.as_os_str().as_bytes()).context("cwd NUL")?),

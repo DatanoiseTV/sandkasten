@@ -167,12 +167,16 @@ pub fn render(p: &Profile) -> String {
     s.push_str("\n[network]\n");
     s.push_str(&format!("  mode: {}\n", net_mode.label));
     if !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty() {
-        s.push_str(
-            "  per-IP filtering: applied via nftables inside the netns when `nft` is installed.\n",
-        );
-        s.push_str(
-            "  external connectivity: requires pasta, slirp4netns, or an already-plumbed netns.\n",
-        );
+        if net_mode.unshare_net {
+            s.push_str("  per-IP filtering: nftables allow-list inside the private netns.\n");
+        } else {
+            s.push_str(
+                "  per-IP filtering: NOT enforced (host netns mode — kernel-level\n\
+                 \x20                    nftables rules would affect the host globally).\n\
+                 \x20                    Use [network.netns_path] to plumb your own\n\
+                 \x20                    isolated netns if filtering matters.\n",
+            );
+        }
         for ep in &p.network.outbound_tcp {
             s.push_str(&format!("    tcp → {ep}\n"));
         }
@@ -217,9 +221,9 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
     let has_inbound = p.network.allow_inbound
         || !p.network.inbound_tcp.is_empty()
         || !p.network.inbound_udp.is_empty();
+    let wants_external = p.network.allow_dns || has_outbound;
     let all_off = !p.network.allow_localhost
-        && !p.network.allow_dns
-        && !has_outbound
+        && !wants_external
         && !has_inbound
         && !p.network.allow_icmp
         && !p.network.allow_icmpv6;
@@ -231,12 +235,27 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
             label: "none (private netns, no interfaces)",
         };
     }
+    // Outbound-only or outbound+localhost with no inbound. Without a
+    // pasta/slirp4netns bridge a private Linux netns has no interface
+    // to reach the internet, so everything dies at getaddrinfo. Match
+    // macOS's out-of-the-box behaviour by sharing the host netns; the
+    // sandboxed process can still be constrained by Landlock, seccomp,
+    // and the namespace barriers on /mnt, /proc, etc. Users who want
+    // per-IP filtering should point `[network.netns_path]` at a
+    // pre-plumbed namespace or set `external = "isolated"` (reserved
+    // for future pasta integration).
+    if !has_inbound && wants_external {
+        return NetMode {
+            unshare_net: false,
+            bring_up_lo: false,
+            label: "host netns (outbound+localhost; set [network.netns_path] for per-IP isolation)",
+        };
+    }
     if !has_inbound {
         return NetMode {
             unshare_net: true,
             bring_up_lo: p.network.allow_localhost,
-            label:
-                "private netns + nftables per-host allowlist (external connectivity needs pasta/slirp4netns)",
+            label: "private netns (localhost only)",
         };
     }
     NetMode {

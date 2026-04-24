@@ -8,6 +8,10 @@ read = [
     "/",
 ]
 read_write = [
+    # CWD — the most common dev use case is "clone/build/edit in this
+    # directory". Without CWD here, `git clone`, `npm install`,
+    # `cargo build`, etc. all fail at the first write.
+    "${CWD}",
     "/tmp",
     "/private/tmp",
     "/private/var/folders",
