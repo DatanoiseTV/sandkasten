@@ -10,6 +10,11 @@ read = [
     "/usr/sbin",
     "/usr/local",
     "/opt",
+    # CWD read-only — the common reason to reach for minimal-cli is
+    # `awk / sed / sort / wc / grep <file-in-cwd>`. Without this,
+    # every invocation needs extra `--read` flags. Writes are still
+    # denied; use `self` or `dev` if you need to write the result back.
+    "${CWD}",
 ]
 read_files = [
     "/etc/passwd",

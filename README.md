@@ -553,7 +553,7 @@ files = { "config.json" = '{"api":"local"}' }
 |------------------|---------------------------------------------------------------------------|
 | `self`           | **Default.** Read across `/`, read+write only `${CWD}`, hard-deny secrets |
 | `strict`         | Near-zero permissions — minimal base every dynamically-linked binary needs|
-| `minimal-cli`    | `strict` + `/usr/bin /bin /sbin /usr/local /opt` readable                 |
+| `minimal-cli`    | `strict` + `/usr/bin /bin /sbin /usr/local /opt` + CWD readable           |
 | `network-client` | `minimal-cli` + outbound TCP 80/443 + DNS. Read-only FS.                  |
 | `dev`            | Permissive. Read `/`, write CWD/TMP, localhost. Denies user secrets.      |
 | `browser`        | Chromium-family browsers. Pair with `--no-sandbox`.                       |
