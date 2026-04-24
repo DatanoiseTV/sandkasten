@@ -2,6 +2,22 @@ name = "network-client"
 description = "Outbound HTTPS + DNS only. Read-only FS. Good for curl/wget-style tools."
 extends = "minimal-cli"
 
+[filesystem]
+# TLS clients read their system-wide config and trust store.
+# On macOS, Apple's own CA roots live in /System/Library/OpenSSL but
+# third-party tools (curl/libressl/openssl) also consult /etc/ssl.
+read = [
+    "/etc/ssl",
+    "/usr/lib/ssl",
+]
+# macOS's /etc/resolv.conf is a symlink to /var/run/resolv.conf, and
+# getaddrinfo() also checks /var/run/mDNSResponder for the Unix-domain
+# socket to the resolver. Without these the sandboxed process can't
+# resolve DNS even though we allowed UDP:53.
+read_files = [
+    "/var/run/resolv.conf",
+]
+
 [network]
 allow_dns = true
 allow_unix_sockets = true   # many HTTP clients use local sockets for IPC/agent forwarding
@@ -16,5 +32,13 @@ mach_services = [
     "com.apple.system.notification_center",
     "com.apple.nsurlsessiond",
     "com.apple.SystemConfiguration.configd",
+    # DNS resolution — both the public service and the legacy lookup port.
     "com.apple.dnssd.service",
+    "com.apple.mDNSResponder",
+    "com.apple.mDNSResponder.dnsproxy",
+    # Some TLS libraries consult the OCSP/CRL cache here.
+    "com.apple.ocspd",
+    "com.apple.cfnetwork.cfnetworkagent",
+    "com.apple.networkd",
+    "com.apple.symptomsd",
 ]

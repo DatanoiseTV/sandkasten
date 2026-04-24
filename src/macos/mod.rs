@@ -56,7 +56,8 @@ pub fn last_child_pid() -> Option<i32> {
 }
 
 pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32> {
-    let policy = sbpl::generate(profile);
+    let target = argv.first().map(|s| s.as_str());
+    let policy = sbpl::generate_for_target(profile, target);
     if crate::log::at!(crate::log::Level::Trace) {
         eprintln!("─── generated SBPL ───");
         for line in policy.lines() {

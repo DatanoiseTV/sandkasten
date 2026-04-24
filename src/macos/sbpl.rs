@@ -15,6 +15,18 @@ use crate::config::{Endpoint, HostSpec, PortSpec, Profile};
 use std::fmt::Write;
 
 pub fn generate(p: &Profile) -> String {
+    generate_for_target(p, None)
+}
+
+/// Like [`generate`], but if `target` is set, unconditionally allow
+/// `process-exec` on that one literal path so the initial `execve` that
+/// sandkasten itself calls after `sandbox_init` always succeeds. Without
+/// this, a profile with `allow_exec = false` blocks its own entry point
+/// on macOS: the policy takes effect *before* the `execve` that launches
+/// argv[0], so there is no way to ever reach the sandboxed binary.
+/// `file-map-executable` is also granted for the target so dyld can mmap
+/// the binary itself (separate permission from `file-read*`).
+pub fn generate_for_target(p: &Profile, target: Option<&str>) -> String {
     let mut s = String::with_capacity(4096);
     let _ = writeln!(s, ";; sandkasten generated profile");
     if let Some(n) = &p.name {
@@ -47,6 +59,44 @@ pub fn generate(p: &Profile) -> String {
         // Children inherit the sandbox by default — no `(with no-sandbox)`.
         s.push_str("(allow process-exec)\n");
         s.push_str("(allow process-exec-interpreter)\n");
+    } else if let Some(t) = target {
+        // One-shot grant for the initial execve sandkasten itself performs.
+        // Children still can't exec new programs.
+        let _ = writeln!(s, "(allow process-exec (literal {}))", quote(t));
+        let _ = writeln!(s, "(allow process-exec-interpreter (literal {}))", quote(t));
+    }
+    // dyld bootstrap — see Apple's /System/Library/Sandbox/Profiles/dyld-support.sb.
+    //
+    // On macOS 14+, every dynamic Mach-O binary loads dylibs from the
+    // shared cache stored in cryptex graft points:
+    //   /System/Cryptexes/OS        (symlink on snapshot boots)
+    //   /System/Volumes/Preboot/Cryptexes/OS (the actual cryptex mount)
+    // Without access to these, even `/usr/bin/true` SIGABRTs during
+    // startup before main() runs. We also have to grant `file-read*
+    // file-test-existence` on every ancestor directory (libignition in
+    // dyld opens "/" as an openat(2) root and fstatats the graft dirs),
+    // and `file-map-executable` (separate permission from file-read*)
+    // for dyld to mmap the cache pages executable.
+    //
+    // These grants are unconditional when any exec is allowed: they are
+    // the bare minimum for a dynamic binary to even reach main(). The
+    // actual read scope is still constrained by the profile's read list.
+    if p.process.allow_exec || target.is_some() {
+        s.push_str("(allow file-map-executable)\n");
+        s.push_str(";; dyld cryptex + root-directory bootstrap\n");
+        s.push_str("(allow file-read* file-test-existence (literal \"/\"))\n");
+        s.push_str(
+            "(allow file-read* file-test-existence file-map-executable \
+             (subpath \"/System/Cryptexes/OS\") \
+             (subpath \"/System/Volumes/Preboot/Cryptexes/OS\"))\n",
+        );
+        s.push_str(
+            "(allow file-read* file-test-existence \
+             (literal \"/System/Volumes\") \
+             (literal \"/System/Volumes/Preboot\") \
+             (literal \"/System/Volumes/Preboot/Cryptexes\") \
+             (literal \"/System/Cryptexes\"))\n",
+        );
     }
     if p.system.allow_sysctl_read {
         s.push_str("(allow sysctl-read)\n");
@@ -82,10 +132,14 @@ pub fn generate(p: &Profile) -> String {
     if !p.filesystem.read.is_empty() || !p.filesystem.read_files.is_empty() {
         s.push_str(";; --- filesystem: read ---\n");
         for path in &p.filesystem.read {
-            let _ = writeln!(s, "(allow file-read* (subpath {}))", quote(path));
+            for p in firmlink_variants(path) {
+                let _ = writeln!(s, "(allow file-read* (subpath {}))", quote(&p));
+            }
         }
         for path in &p.filesystem.read_files {
-            let _ = writeln!(s, "(allow file-read* (literal {}))", quote(path));
+            for p in firmlink_variants(path) {
+                let _ = writeln!(s, "(allow file-read* (literal {}))", quote(&p));
+            }
         }
         s.push('\n');
     }
@@ -94,18 +148,14 @@ pub fn generate(p: &Profile) -> String {
     if !p.filesystem.read_write.is_empty() || !p.filesystem.read_write_files.is_empty() {
         s.push_str(";; --- filesystem: read+write ---\n");
         for path in &p.filesystem.read_write {
-            let _ = writeln!(
-                s,
-                "(allow file-read* file-write* (subpath {}))",
-                quote(path)
-            );
+            for p in firmlink_variants(path) {
+                let _ = writeln!(s, "(allow file-read* file-write* (subpath {}))", quote(&p));
+            }
         }
         for path in &p.filesystem.read_write_files {
-            let _ = writeln!(
-                s,
-                "(allow file-read* file-write* (literal {}))",
-                quote(path)
-            );
+            for p in firmlink_variants(path) {
+                let _ = writeln!(s, "(allow file-read* file-write* (literal {}))", quote(&p));
+            }
         }
         s.push('\n');
     }
@@ -407,6 +457,30 @@ fn emit_net(kind: &str, proto: &str, e: &Endpoint, widened: &mut bool) -> String
     format!("(allow {kind} (remote {proto} \"{host_str}:{port_str}\"))\n")
 }
 
+/// On macOS, `/etc`, `/tmp`, and `/var` are symlinks into `/private/*`.
+/// Seatbelt resolves symlinks before checking `literal` / `subpath` rules,
+/// so a rule on `/etc/hosts` will not match when a process opens
+/// `/private/etc/hosts` — which is what every open of `/etc/hosts` really
+/// becomes. Emit both forms so the user doesn't need to know the trick.
+fn firmlink_variants(path: &str) -> Vec<String> {
+    let prefixes = ["/etc/", "/tmp/", "/var/"];
+    let literals = ["/etc", "/tmp", "/var"];
+    let mut out = vec![path.to_string()];
+    for pfx in prefixes {
+        if let Some(rest) = path.strip_prefix(pfx) {
+            out.push(format!("/private{pfx}{rest}"));
+            return out;
+        }
+    }
+    for lit in literals {
+        if path == lit {
+            out.push(format!("/private{lit}"));
+            return out;
+        }
+    }
+    out
+}
+
 fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -482,6 +556,31 @@ mod tests {
         let s = generate(&p);
         assert!(s.contains("(allow mach-lookup (global-name \"com.apple.system.logger\"))"));
         assert!(s.contains("(allow file-read* (subpath \"/usr/lib\"))"));
+    }
+
+    #[test]
+    fn firmlink_variants_alias_etc_tmp_var_into_private() {
+        let mut p = Profile::default();
+        p.filesystem.read_files = vec!["/etc/hosts".into(), "/var/run/resolv.conf".into()];
+        let s = generate(&p);
+        assert!(s.contains("(allow file-read* (literal \"/etc/hosts\"))"));
+        assert!(s.contains("(allow file-read* (literal \"/private/etc/hosts\"))"));
+        assert!(s.contains("(allow file-read* (literal \"/var/run/resolv.conf\"))"));
+        assert!(s.contains("(allow file-read* (literal \"/private/var/run/resolv.conf\"))"));
+    }
+
+    #[test]
+    fn target_grants_initial_exec_when_allow_exec_is_false() {
+        let p = Profile::default();
+        // allow_exec defaults to false.
+        let without = generate(&p);
+        assert!(!without.contains("process-exec"));
+
+        let with = generate_for_target(&p, Some("/usr/bin/true"));
+        assert!(with.contains("(allow process-exec (literal \"/usr/bin/true\"))"));
+        // dyld bootstrap must also be present so the initial execve can load.
+        assert!(with.contains("(allow file-map-executable)"));
+        assert!(with.contains("(literal \"/System/Volumes/Preboot/Cryptexes\")"));
     }
 
     // Keep the imports used in tests reachable.

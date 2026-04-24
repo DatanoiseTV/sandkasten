@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.2.1 — 2026-04-24
+
+Dogfood pass on macOS surfaced three template-level bugs. All fixed here
+without changing any public API.
+
+### macOS SBPL generator
+
+- **Initial `execve` always granted.** Templates with `allow_exec = false`
+  (notably `strict`) previously made their own entry point unreachable:
+  Seatbelt applies before the `execve` sandkasten itself issues, so a
+  blanket `(deny process-exec)` kills the launch. Now we always emit
+  `(allow process-exec (literal "<argv[0]>"))` — one-shot grant for the
+  target binary only; children still inherit whatever `allow_exec` says.
+- **dyld bootstrap baked in.** On macOS 14+ every dynamic Mach-O binary
+  loads its dylibs from the shared cache stored in cryptex graft points
+  (`/System/Cryptexes/OS`, `/System/Volumes/Preboot/Cryptexes/OS`, plus
+  each ancestor). Without these grants, even `/usr/bin/true` SIGABRTed
+  during dyld startup. We now emit the full graft-point + ancestor
+  allowance set (mirrored from Apple's own `dyld-support.sb`) whenever
+  any exec is allowed.
+- **`/etc`, `/tmp`, `/var` firmlink aliasing.** Seatbelt matches paths
+  post-symlink-resolution, so a rule on `/etc/hosts` never fires because
+  the real path is `/private/etc/hosts`. The SBPL generator now emits
+  both forms automatically for any read/read_files/read_write/
+  read_write_files entry whose path begins with `/etc`, `/tmp`, or `/var`.
+
+### Templates
+
+- **`strict`:** added `/System/Volumes/Preboot/Cryptexes` to `read` so
+  dyld can actually find the shared cache on live-fs boots. (The dyld
+  bootstrap set granted by the generator is the minimum; the template
+  still controls everything else.)
+- **`network-client`:** added `/etc/ssl` + `/var/run/resolv.conf` so
+  libressl/curl find their TLS config and DNS resolver file, plus a
+  handful more mach services (`com.apple.mDNSResponder`, `ocspd`,
+  `cfnetworkagent`, `networkd`, `symptomsd`) needed for outbound TLS.
+
+### Tests
+
+Two new generator tests: `firmlink_variants_alias_etc_tmp_var_into_private`
+and `target_grants_initial_exec_when_allow_exec_is_false`. 13 total,
+all green on macOS + Linux.
+
 ## v0.2.0 — 2026-04-24
 
 A very large release on top of the initial tag. The short version: sandkasten

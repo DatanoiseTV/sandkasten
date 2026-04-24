@@ -4,10 +4,18 @@ description = "Near-zero permissions. Barely enough to boot a dynamically-linked
 [filesystem]
 allow_metadata_read = true
 # Everything the dynamic linker needs to load a Mach-O binary.
+# macOS 14+ stores the dyld shared cache in cryptex volumes mounted
+# under /System/Cryptexes and /System/Volumes/Preboot/Cryptexes — both
+# need to be readable or dynamic binaries SIGABRT at startup before
+# they can even run their main(). /System includes /System/Cryptexes
+# via the APFS volume group firmlinks, but the underlying Preboot mount
+# has to be listed too (Seatbelt path matching is post-resolution and
+# some dyld lookups land on the Preboot path directly).
 read = [
     "/usr/lib",
     "/usr/share",
     "/System",
+    "/System/Volumes/Preboot/Cryptexes",
     "/Library/Apple/System",
     "/private/var/db/dyld",
     "/private/var/db/timezone",
