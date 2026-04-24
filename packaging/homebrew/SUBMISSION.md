@@ -8,23 +8,26 @@ distribution channel and is kept in sync with every tagged release.
 ## Eligibility — the notability gate
 
 Homebrew-core's [Acceptable Formulae](https://docs.brew.sh/Acceptable-Formulae)
-policy requires the software to be *notable*. Concretely, the upstream
-repository must have **at least one** of:
+policy requires the software to be *notable*. Confirmed thresholds (from
+the maintainer feedback on PR #279268):
 
-- 75+ stars
-- 30+ forks
-- 30+ watchers
+- **Third-party submission** (someone other than the project author):
+  ≥30 forks **and** ≥30 watchers **and** ≥75 stars
+- **Self-submission** (by the project author — this is us):
+  ≥90 forks **and** ≥90 watchers **and** ≥225 stars
 
-Check the current numbers with:
+All three counts must be met; "any one of" is not enough. Check the
+current numbers with:
 
 ```sh
 gh api repos/DatanoiseTV/sandkasten \
   --jq '{stars: .stargazers_count, forks: .forks_count, watchers: .subscribers_count}'
 ```
 
-**Do not open the PR before one of those thresholds is met.** The
-maintainers will close it with a "not notable enough yet" comment and
-the closure may make resubmission awkward later.
+**Do not open the PR before all three thresholds are met.** The first
+attempt (PR #279268, v0.2.0) was closed within an hour with a polite
+"doesn't currently meet the applicable thresholds" comment — no drama,
+but a closed PR is still a closed PR. Wait until the counts clear.
 
 ## Pre-flight audit
 
