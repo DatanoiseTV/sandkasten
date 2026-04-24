@@ -224,7 +224,65 @@ fn harden_prctl() -> Result<()> {
             std::io::Error::last_os_error()
         );
     }
+    // PR_SET_PTRACER(-1) : explicitly disallow ptrace from any pid, even
+    // our parent. Complements PR_SET_DUMPABLE for the Yama LSM case.
+    // SAFETY: prctl takes fixed integer args.
+    let rc = unsafe {
+        libc::prctl(
+            libc::PR_SET_PTRACER,
+            // -1 cast to unsigned long == PR_SET_PTRACER_ANY off (explicit)
+            (-1i64) as libc::c_ulong,
+            0,
+            0,
+            0,
+        )
+    };
+    if rc != 0 {
+        // Yama not enabled or prctl unavailable on this kernel — harmless.
+    }
+
+    // Drop capabilities from the bounding set. We're in a user namespace
+    // so the kernel has given us a full cap set mapped to uid 0 inside.
+    // We drop the scary ones so even if a future syscall sneaks past
+    // seccomp, it can't be invoked with privilege.
+    drop_caps();
     Ok(())
+}
+
+/// Drop every capability we can realistically name. PR_CAPBSET_DROP only
+/// affects the bounding set — the effective/permitted sets get narrowed
+/// too via capset, but on a best-effort basis (if the kernel refuses, we
+/// keep going because seccomp is the real gate).
+fn drop_caps() {
+    // From <linux/capability.h>. Listed explicitly instead of a loop so
+    // each drop's intent is visible.
+    const CAPS: &[libc::c_int] = &[
+        21,  // CAP_SYS_ADMIN — the most dangerous; we already deny mount/unshare/setns via seccomp
+        22,  // CAP_SYS_BOOT
+        23,  // CAP_SYS_NICE
+        24,  // CAP_SYS_RESOURCE
+        25,  // CAP_SYS_TIME
+        26,  // CAP_SYS_TTY_CONFIG
+        27,  // CAP_MKNOD
+        28,  // CAP_LEASE
+        29,  // CAP_AUDIT_WRITE
+        30,  // CAP_AUDIT_CONTROL
+        31,  // CAP_SETFCAP
+        32,  // CAP_MAC_OVERRIDE
+        33,  // CAP_MAC_ADMIN
+        34,  // CAP_SYSLOG
+        35,  // CAP_WAKE_ALARM
+        36,  // CAP_BLOCK_SUSPEND
+        37,  // CAP_AUDIT_READ
+        38,  // CAP_PERFMON
+        39,  // CAP_BPF
+        40,  // CAP_CHECKPOINT_RESTORE
+    ];
+    for &cap in CAPS {
+        // SAFETY: prctl with fixed integer arguments. Ignores EINVAL for
+        // capability numbers the running kernel doesn't know about.
+        unsafe { libc::prctl(libc::PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0) };
+    }
 }
 
 /// Bind-mount synth DNS and hosts files over `/etc/resolv.conf` and

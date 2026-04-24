@@ -269,6 +269,12 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
         HostSpec::Ipv6(v6) => {
             rules.push_str(&format!("        ip6 daddr {v6} {proto_port} accept\n"));
         }
+        HostSpec::Ipv4Cidr(v4, mask) => {
+            rules.push_str(&format!("        ip daddr {v4}/{mask} {proto_port} accept\n"));
+        }
+        HostSpec::Ipv6Cidr(v6, mask) => {
+            rules.push_str(&format!("        ip6 daddr {v6}/{mask} {proto_port} accept\n"));
+        }
         HostSpec::Name(n) => {
             // nftables does not resolve hostnames at rule-load time.
             // Best-effort: resolve to every A/AAAA record and emit rules for

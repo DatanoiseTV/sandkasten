@@ -588,6 +588,7 @@ impl Profile {
             for p in v.iter_mut() {
                 *p = ctx.expand(p)?;
             }
+            expand_globs_in_place(v);
         }
         for r in &mut self.filesystem.rules {
             r.path = ctx.expand(&r.path)?;
@@ -812,6 +813,41 @@ impl Profile {
     }
 }
 
+/// Expand entries that look like shell globs (contain any of `*`, `?`, `[`)
+/// into the concrete paths they match on the host filesystem. Non-glob
+/// entries are left untouched. De-duplicates.
+fn expand_globs_in_place(v: &mut Vec<String>) {
+    let mut out: Vec<String> = Vec::with_capacity(v.len());
+    for p in v.drain(..) {
+        if p.contains('*') || p.contains('?') || p.contains('[') {
+            match glob::glob(&p) {
+                Ok(iter) => {
+                    let before = out.len();
+                    for entry in iter.flatten() {
+                        let s = entry.to_string_lossy().into_owned();
+                        if !out.contains(&s) {
+                            out.push(s);
+                        }
+                    }
+                    if out.len() == before {
+                        eprintln!(
+                            "sandkasten ⚠ glob {p:?} matched nothing on this host — kept literally"
+                        );
+                        out.push(p);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("sandkasten ⚠ invalid glob {p:?}: {e} — kept literally");
+                    out.push(p);
+                }
+            }
+        } else if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    *v = out;
+}
+
 fn extend<T: PartialEq>(dst: &mut Vec<T>, src: Vec<T>) {
     for v in src {
         if !dst.contains(&v) {
@@ -940,6 +976,10 @@ pub enum HostSpec {
     Name(String),
     Ipv4(std::net::Ipv4Addr),
     Ipv6(std::net::Ipv6Addr),
+    /// CIDR block — `192.168.1.0/24`. Linux nftables emits this natively;
+    /// macOS Seatbelt has no CIDR form and widens to `*` with a warning.
+    Ipv4Cidr(std::net::Ipv4Addr, u8),
+    Ipv6Cidr(std::net::Ipv6Addr, u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -971,6 +1011,26 @@ pub fn parse_endpoint(s: &str) -> Result<Endpoint> {
 
     let host = if host == "*" {
         HostSpec::Any
+    } else if let Some((addr, mask)) = host.split_once('/') {
+        // CIDR form.
+        let mask: u8 = mask
+            .parse()
+            .map_err(|_| anyhow!("invalid CIDR mask in {host:?}"))?;
+        if let Ok(v4) = addr.parse::<std::net::Ipv4Addr>() {
+            if mask > 32 {
+                return Err(anyhow!("IPv4 CIDR mask must be 0..=32, got {mask}"));
+            }
+            HostSpec::Ipv4Cidr(v4, mask)
+        } else if let Ok(v6) = addr.parse::<std::net::Ipv6Addr>() {
+            if mask > 128 {
+                return Err(anyhow!("IPv6 CIDR mask must be 0..=128, got {mask}"));
+            }
+            HostSpec::Ipv6Cidr(v6, mask)
+        } else {
+            return Err(anyhow!(
+                "CIDR form {host:?} must start with an IP address (v4 or v6)"
+            ));
+        }
     } else if let Ok(v4) = host.parse::<std::net::Ipv4Addr>() {
         HostSpec::Ipv4(v4)
     } else if let Ok(v6) = host.parse::<std::net::Ipv6Addr>() {

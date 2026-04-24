@@ -394,7 +394,11 @@ fn emit_net(kind: &str, proto: &str, e: &Endpoint, widened: &mut bool) -> String
         HostSpec::Name(n) if n == "localhost" => ("localhost".to_string(), false),
         HostSpec::Ipv4(v4) if v4.is_loopback() => ("localhost".to_string(), false),
         HostSpec::Ipv6(v6) if v6.is_loopback() => ("localhost".to_string(), false),
-        HostSpec::Name(_) | HostSpec::Ipv4(_) | HostSpec::Ipv6(_) => ("*".to_string(), true),
+        HostSpec::Name(_)
+        | HostSpec::Ipv4(_)
+        | HostSpec::Ipv6(_)
+        | HostSpec::Ipv4Cidr(_, _)
+        | HostSpec::Ipv6Cidr(_, _) => ("*".to_string(), true),
     };
     if had_to_widen {
         *widened = true;

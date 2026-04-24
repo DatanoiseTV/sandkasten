@@ -36,11 +36,22 @@ Unprivileged — sandkasten itself never requires root.
 
 ## Install
 
-```sh
-# From a local clone
-cargo install --path .
+### Homebrew (macOS + Linuxbrew)
 
-# Or just build
+```sh
+brew tap DatanoiseTV/sandkasten
+brew install sandkasten
+# or track main:
+brew install --HEAD sandkasten
+```
+
+Shell completions are installed automatically for bash/zsh/fish.
+
+### From source
+
+```sh
+cargo install --path .
+# or
 cargo build --release   # → target/release/sandkasten
 ```
 
@@ -686,4 +697,4 @@ Dual-licensed under **MIT** or **Apache-2.0** at your option.
 - [ ] Transparent mock interposition via `LD_PRELOAD` /
       `DYLD_INSERT_LIBRARIES`
 - [ ] Live policy reload (SIGHUP → re-apply; sandbox_init only narrows)
-- [ ] Homebrew tap
+- [x] Homebrew tap published at `DatanoiseTV/sandkasten`

@@ -203,6 +203,21 @@ fn run(args: cli::Cli) -> Result<i32> {
             ui::run(port, !no_open)?;
             Ok(0)
         }
+        cli::Command::Wrap { profile, timeout, cwd, argv } => {
+            // Delegate to the Run path with the chosen profile (defaulting
+            // to `self`).
+            run(cli::Cli {
+                command: cli::Command::Run {
+                    profile,
+                    cwd,
+                    timeout,
+                    verify: false,
+                    argv,
+                },
+                verbose: args.verbose,
+                quiet: args.quiet,
+            })
+        }
         cli::Command::Shell { profile, shell, cwd } => {
             let raw = config::load(&profile)?;
             let ctx = config::ExpandContext::detect(None)?;

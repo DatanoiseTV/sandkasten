@@ -75,6 +75,30 @@ pub enum Command {
         profile: String,
     },
 
+    /// Transparent wrapper: sandbox a command with sensible defaults.
+    /// Equivalent to `run self -- <cmd>` unless `--profile` is given.
+    ///
+    /// Prepend `sandkasten wrap --` in aliases, scripts, CI steps:
+    ///     alias npm='sandkasten wrap --profile dev -- npm'
+    ///     sandkasten wrap -- ./untrusted-build.sh
+    Wrap {
+        /// Profile to apply. Defaults to `self`.
+        #[arg(long, short = 'p', default_value = "self")]
+        profile: String,
+
+        /// Wall-clock timeout.
+        #[arg(long)]
+        timeout: Option<String>,
+
+        /// Override the working directory inside the sandbox.
+        #[arg(long, short = 'C')]
+        cwd: Option<PathBuf>,
+
+        /// Command and arguments to run.
+        #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
+        argv: Vec<String>,
+    },
+
     /// Drop into an interactive shell inside the sandbox. The child sees
     /// `$SANDKASTEN_PROFILE` set to the active profile name so you can
     /// reference it from `PS1`.

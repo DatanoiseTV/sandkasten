@@ -88,6 +88,15 @@ pub fn install(_profile: &Profile) -> Result<()> {
         libc::SYS_mbind,
         libc::SYS_set_mempolicy,
         libc::SYS_get_mempolicy,
+        // Process accounting — lets a root-in-userns attacker turn on
+        // accounting and enumerate host process execs via the syscall.
+        libc::SYS_acct,
+        // Legacy library loader — deprecated, occasionally abused for
+        // ELF parsing tricks.
+        libc::SYS_uselib,
+        // Deprecated / legacy that should never be called by a modern
+        // sandboxed binary and are thin wrappers for long-ago semantics.
+        libc::SYS_lookup_dcookie,
     ];
 
     #[cfg(target_arch = "x86_64")]
