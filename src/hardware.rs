@@ -4,11 +4,13 @@
 use crate::config::Profile;
 
 pub fn expand(p: &mut Profile) {
-    if p.hardware.usb       { apply_usb(p); }
-    if p.hardware.serial    { apply_serial(p); }
-    if p.hardware.audio     { apply_audio(p); }
-    if p.hardware.gpu       { apply_gpu(p); }
-    if p.hardware.camera    { apply_camera(p); }
+    if p.hardware.usb            { apply_usb(p); }
+    if p.hardware.serial         { apply_serial(p); }
+    if p.hardware.audio          { apply_audio(p); }
+    if p.hardware.gpu            { apply_gpu(p); }
+    if p.hardware.camera         { apply_camera(p); }
+    if p.hardware.screen_capture { apply_screen_capture(p); }
+    apply_video_controls(p);
 }
 
 fn add_rw(p: &mut Profile, path: &str) {
@@ -168,9 +170,10 @@ fn apply_gpu(p: &mut Profile) {
 fn apply_camera(p: &mut Profile) {
     #[cfg(target_os = "linux")]
     {
-        // Video4Linux exposes /dev/video*, /dev/media*.
+        // Video4Linux exposes /dev/video*, /dev/media*, /dev/v4l*.
         add_rw(p, "/dev");
         add_r(p, "/sys/class/video4linux");
+        add_r(p, "/sys/bus/media");
     }
     #[cfg(target_os = "macos")]
     {
@@ -178,5 +181,81 @@ fn apply_camera(p: &mut Profile) {
         add_mach(p, "com.apple.cmio.AssistantService");
         add_mach(p, "com.apple.cmio.VDCAssistant");
         add_mach(p, "com.apple.cmio.registerassistantservice");
+        // AVFoundation's sample buffer pipeline.
+        add_mach(p, "com.apple.cmio.CameraAssistant");
+        add_mach(p, "com.apple.coremedia.videocompositor");
+        add_mach(p, "com.apple.audio.mediaserverd");
+    }
+}
+
+fn apply_screen_capture(p: &mut Profile) {
+    #[cfg(target_os = "linux")]
+    {
+        // PipeWire screencast + wayland/X compositors. /dev/dri covers GPU
+        // capture; /run/user for the PipeWire socket.
+        add_rw(p, "/dev/dri");
+        add_rw(p, "/run/user");
+        p.network.allow_unix_sockets = true;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        p.system.allow_iokit = true;
+        add_mach(p, "com.apple.windowserver.active");
+        add_mach(p, "com.apple.CoreDisplay.Notification");
+        add_mach(p, "com.apple.cmio.ScreenCaptureAssistant");
+        add_mach(p, "com.apple.screencaptureui");
+        // ScreenCaptureKit service (macOS 12.3+).
+        add_mach(p, "com.apple.ScreenCaptureKit.AgentBridge");
+    }
+}
+
+/// Apply the `[hardware.video]` allowlist and redirect table. Converts
+/// them into `filesystem.rewire` and `filesystem.hide` entries so the
+/// downstream Linux mount layer does the actual work.
+fn apply_video_controls(p: &mut Profile) {
+    use crate::config::Rewire;
+
+    // Redirects become rewire entries.
+    let redirects: Vec<(String, String)> = p
+        .hardware
+        .video
+        .redirect
+        .clone()
+        .into_iter()
+        .collect();
+    for (from, to) in redirects {
+        if !p.filesystem.rewire.iter().any(|r| r.from == from) {
+            p.filesystem.rewire.push(Rewire { from, to });
+        }
+    }
+
+    // If a devices allowlist is set, hide every /dev/video*, /dev/media*,
+    // /dev/v4l-subdev* that isn't listed. Enumeration runs on the host.
+    let allow = &p.hardware.video.devices;
+    if !allow.is_empty() {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(rd) = std::fs::read_dir("/dev") {
+                for e in rd.flatten() {
+                    let name = e.file_name();
+                    let name_s = name.to_string_lossy().into_owned();
+                    let is_video = name_s.starts_with("video")
+                        || name_s.starts_with("media")
+                        || name_s.starts_with("v4l-subdev");
+                    if !is_video {
+                        continue;
+                    }
+                    let full = format!("/dev/{name_s}");
+                    if !allow.iter().any(|d| d == &full) {
+                        if !p.filesystem.hide.iter().any(|x| x == &full) {
+                            p.filesystem.hide.push(full);
+                        }
+                    }
+                }
+            }
+        }
+        // On macOS the camera is mediated by Mach services, not device
+        // nodes — the allowlist is a no-op there with a soft-warning
+        // deferred to run time.
     }
 }

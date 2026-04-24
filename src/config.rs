@@ -174,6 +174,35 @@ pub struct Hardware {
     /// Camera / webcam / V4L2.
     #[serde(default)]
     pub camera: bool,
+
+    /// Screen capture / recording. macOS: adds ScreenCaptureKit and
+    /// CoreGraphics Mach services + TCC grant path. Linux: adds /dev/dri
+    /// for GPU-accelerated capture (PipeWire screencast works with
+    /// [hardware].audio + gpu + camera together).
+    #[serde(default)]
+    pub screen_capture: bool,
+
+    /// Fine-grained video-device controls. Expands into `[[filesystem.rewire]]`
+    /// + `[[filesystem.hide]]` entries at profile-load time.
+    #[serde(default)]
+    pub video: Video,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Video {
+    /// Allowlist of video device nodes visible to the sandbox. Any
+    /// `/dev/video*` / `/dev/media*` NOT in this list is hidden via
+    /// `filesystem.hide`. Empty → no whitelisting.
+    #[serde(default)]
+    pub devices: Vec<String>,
+
+    /// Camera redirects: map of "path the sandbox sees" → "path on host".
+    /// E.g. `{ "/dev/video0" = "/dev/video5" }` makes /dev/video0 inside
+    /// the sandbox resolve to the host's /dev/video5 (a v4l2loopback
+    /// device fed by another process, for instance). Linux only.
+    #[serde(default)]
+    pub redirect: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -715,11 +744,16 @@ impl Profile {
         }
 
         // Hardware flags: additive.
-        out.hardware.usb    |= self.hardware.usb;
-        out.hardware.serial |= self.hardware.serial;
-        out.hardware.audio  |= self.hardware.audio;
-        out.hardware.gpu    |= self.hardware.gpu;
-        out.hardware.camera |= self.hardware.camera;
+        out.hardware.usb            |= self.hardware.usb;
+        out.hardware.serial         |= self.hardware.serial;
+        out.hardware.audio          |= self.hardware.audio;
+        out.hardware.gpu            |= self.hardware.gpu;
+        out.hardware.camera         |= self.hardware.camera;
+        out.hardware.screen_capture |= self.hardware.screen_capture;
+        extend(&mut out.hardware.video.devices, self.hardware.video.devices);
+        for (k, v) in self.hardware.video.redirect {
+            out.hardware.video.redirect.insert(k, v);
+        }
 
         // Spoof: child scalar wins where set.
         out.spoof.cpu_count       = self.spoof.cpu_count.or(out.spoof.cpu_count);

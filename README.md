@@ -209,6 +209,33 @@ Linux: grants read+write on `/dev/bus/usb` and read on the udev bits
 libusb consults. macOS: grants IOKit + the USB driver family Mach
 services.
 
+### Camera / video-device control
+
+```toml
+[hardware]
+camera = true             # V4L2 (Linux) / AVFoundation (macOS)
+screen_capture = true     # PipeWire screencast (Linux) / ScreenCaptureKit (macOS)
+
+[hardware.video]
+# Only /dev/video0 is visible; every other /dev/video*, /dev/media*,
+# /dev/v4l-subdev* is hidden via an empty bind-mount so enumeration
+# returns nothing rather than EPERM.
+devices = ["/dev/video0"]
+
+# Redirect: inside the sandbox /dev/video0 actually resolves to the
+# host's /dev/video5. Useful for v4l2loopback pipes (feed a fake camera
+# stream from a file or another process into /dev/video5, the sandbox
+# sees /dev/video0).
+redirect = { "/dev/video0" = "/dev/video5" }
+```
+
+Linux implements both via the same mount-namespace bind-mount primitive
+used by DNS overrides; see `[[filesystem.rewire]]` / `[[filesystem.hide]]`
+if you want the raw form. macOS uses the CoreMediaIO + ScreenCaptureKit
+Mach services — AVFoundation doesn't route through device nodes, so the
+allowlist/redirect is Linux-only there (documented in the emitted
+policy).
+
 ### Isolated packet capture / port scanning
 
 ```toml
