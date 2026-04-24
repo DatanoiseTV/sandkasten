@@ -194,6 +194,7 @@ struct ProfileRow: View {
 // ─── detail ──────────────────────────────────────────────────────────────
 
 enum DetailTab: String, CaseIterable, Identifiable {
+    case form   = "Editor"
     case policy = "Policy"
     case toml   = "TOML"
 
@@ -257,6 +258,8 @@ struct DetailView: View {
     @ViewBuilder
     private var contentArea: some View {
         switch tab {
+        case .form:
+            FormView(readonly: entry.kind == .builtin)
         case .policy:
             ScrollView(.vertical, showsIndicators: true) {
                 Text(store.explanation.isEmpty ? "(no explanation yet)" : store.explanation)

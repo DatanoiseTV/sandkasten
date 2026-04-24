@@ -10,9 +10,15 @@ let package = Package(
     products: [
         .executable(name: "SandkastenApp", targets: ["SandkastenApp"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
+    ],
     targets: [
         .executableTarget(
             name: "SandkastenApp",
+            dependencies: [
+                .product(name: "TOMLKit", package: "TOMLKit"),
+            ],
             path: "Sources/SandkastenApp"
         ),
     ]

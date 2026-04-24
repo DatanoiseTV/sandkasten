@@ -17,11 +17,16 @@ final class ProfileStore: ObservableObject {
     @Published var userProfiles: [ProfileEntry] = []
     @Published var selectedID: String?
     @Published var rawToml: String = ""
+    @Published var profile: Profile = Profile()      // parsed model
+    @Published var parseError: String?                // TOML parse issue
     @Published var explanation: String = ""
     @Published var statusLine: String = "Ready"
     @Published var isDirty: Bool = false
     @Published var pendingError: String?
     @Published var newProfilePromptVisible: Bool = false
+    /// When true, profile edits in the form aren't mirrored back to rawToml.
+    /// Prevents feedback loops when we programmatically reload.
+    var suppressRoundTrip: Bool = false
 
     /// Resolved path to the `sandkasten` CLI. Falls back through bundled
     /// binary, $PATH, Homebrew, and repo checkout — see `resolveCLI`.
@@ -184,28 +189,62 @@ final class ProfileStore: ObservableObject {
 
     private func openSelected(id: String) {
         guard let entry = (builtins + userProfiles).first(where: { $0.id == id }) else { return }
-        rawToml = loadRaw(for: entry) ?? "# profile not found"
-        // Pass the absolute path for user profiles so we're independent of
-        // the CLI's config-dir resolution. Built-ins resolve by name.
+        suppressRoundTrip = true
+        defer { suppressRoundTrip = false }
+
+        let raw = loadRaw(for: entry) ?? "# profile not found"
+        rawToml = raw
+        reparseFromRaw()
+        refreshExplanation(for: entry)
+        isDirty = false
+        statusLine = "Loaded \(entry.name)"
+    }
+
+    func reparseFromRaw() {
+        do {
+            profile = try Profile.parse(rawToml)
+            parseError = nil
+        } catch {
+            parseError = "TOML parse: \(error.localizedDescription)"
+            // leave `profile` as it was; form stays editable with the last good value
+        }
+    }
+
+    func refreshExplanation(for entry: ProfileEntry? = nil) {
+        let use = entry ?? selectedEntry()
+        guard let e = use else { return }
         let target: String = {
-            switch entry.kind {
-            case .builtin: return entry.name
+            switch e.kind {
+            case .builtin: return e.name
             case .user:    return Self.profilesDir()
-                .appendingPathComponent("\(entry.name).toml").path
+                .appendingPathComponent("\(e.name).toml").path
             }
         }()
         let (out, err, rc) = runCapturingVerbose(cliPath, ["explain", target])
         if rc == 0, let out = out, !out.isEmpty {
             explanation = out
-            statusLine = "Loaded \(entry.name)"
         } else {
             explanation = "(sandkasten explain failed; exit=\(rc))\n\n"
                 + (err ?? "")
                 + "\ncli path: \(cliPath)"
                 + "\ntarget:   \(target)"
-            statusLine = "Could not render \(entry.name)"
         }
-        isDirty = false
+    }
+
+    /// Re-serialize the in-memory `profile` back to `rawToml`. Called
+    /// from form-editor bindings.
+    func reserializeFromForm() {
+        guard !suppressRoundTrip else { return }
+        do {
+            let toml = try profile.toTOML()
+            if toml != rawToml {
+                rawToml = toml
+                markDirty()
+            }
+            parseError = nil
+        } catch {
+            parseError = "TOML encode: \(error.localizedDescription)"
+        }
     }
 
     func loadRaw(for entry: ProfileEntry) -> String? {
