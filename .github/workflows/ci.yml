@@ -65,14 +65,14 @@ jobs:
 
   linux-smoke:
     name: Linux (end-to-end sandbox smoke)
-    runs-on: ubuntu-latest
     needs: linux
-    # GitHub-hosted ubuntu runners have AppArmor profiles that block
-    # unprivileged writes to /proc/self/setgroups, which kills the
-    # CLONE_NEWUSER setup that sandkasten depends on. The sandbox works
-    # fine on any self-hosted or bare-metal runner; we keep the smoke
-    # test around so a self-hosted runner can surface regressions, but
-    # don't let it fail main on the hosted image.
+    # ubuntu-24.04's `unprivileged_userns` AppArmor profile blocks the
+    # `/proc/self/setgroups` write that sandkasten needs after
+    # CLONE_NEWUSER. ubuntu-22.04 doesn't ship that profile, so the
+    # sandbox actually runs and the smoke test proves something. We
+    # still keep `continue-on-error` because GitHub may start imposing
+    # similar restrictions on older images at any time.
+    runs-on: ubuntu-22.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -82,6 +82,11 @@ jobs:
         run: |
           sysctl kernel.unprivileged_userns_clone 2>/dev/null || true
           sudo sh -c 'echo 1 > /proc/sys/kernel/unprivileged_userns_clone' 2>/dev/null || true
+          # Defensively disable the unprivileged-userns AppArmor profile
+          # if the runner happens to be on an image that has it. Silent
+          # no-op when the profile isn't present.
+          sudo aa-teardown 2>/dev/null || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
       - run: cargo build --release
       - name: "`sandkasten run` end-to-end"
         run: |
