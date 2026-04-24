@@ -14,8 +14,8 @@
 class Sandkasten < Formula
   desc     "Fast, kernel-enforced application sandbox for macOS and Linux"
   homepage "https://github.com/DatanoiseTV/sandkasten"
-  url      "https://github.com/DatanoiseTV/sandkasten/archive/refs/tags/v0.2.0.tar.gz"
-  sha256   "4a1613465c7875c165a52308869983a7146512de5d35088064bd7f84d9f2346b"
+  url      "https://github.com/DatanoiseTV/sandkasten/archive/refs/tags/v0.2.1.tar.gz"
+  sha256   "96ebe031b0140338ba1b09a75b33f949d42f280bb1349e84cc3c2cc65b838214"
   license  any_of: ["MIT", "Apache-2.0"]
   head     "https://github.com/DatanoiseTV/sandkasten.git", branch: "main"
 
