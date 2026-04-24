@@ -286,6 +286,54 @@ sandkasten snap list bigapp
 Previous state is moved aside to `<upper>.bak-<ts>` — nothing is
 ever deleted silently.
 
+### HTTP method / URL filtering, header rewrites
+
+sandkasten's enforcement is **L3/L4** — the kernel sees addresses and
+ports, not HTTP. For L7 rules (block `DELETE`, rewrite the `Host`
+header, add `X-Forwarded-For`, return a synthetic 403 on
+`/api/admin/*`) pair sandkasten with a userland proxy. Pattern:
+
+```toml
+[network]
+allow_dns = true
+
+[network.proxy]
+url    = "http://127.0.0.1:8080"     # your mitmproxy / squid / caddy
+bypass = ["127.0.0.1", "localhost"]
+# restrict_outbound = true           # default — sandbox can ONLY talk
+                                     # to the proxy + bypass hosts
+```
+
+With `restrict_outbound` on, `outbound_tcp` is auto-narrowed to just
+the proxy's `host:port` plus each `bypass` entry. `HTTP_PROXY` /
+`HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` (and their lowercase forms)
+are set in the sandbox's env. Every URL library the app uses — curl,
+libcurl, Go's `net/http`, Python's `requests`, Node's `http` — honours
+those env vars.
+
+Then on the proxy side (example mitmproxy addon):
+
+```python
+# save as rewrite.py; run: mitmproxy -s rewrite.py --listen-port 8080
+from mitmproxy import http
+
+class Rewrite:
+    def request(self, flow: http.HTTPFlow) -> None:
+        # Block dangerous HTTP verbs.
+        if flow.request.method in ("DELETE", "PUT"):
+            flow.response = http.Response.make(403, b"blocked by sandkasten+mitmproxy")
+            return
+        # Rewrite Host + add X-Forwarded-For.
+        if "api.prod.example.com" in flow.request.pretty_host:
+            flow.request.host = "api.staging.example.com"
+        flow.request.headers["X-Forwarded-For"] = "10.0.0.1"
+
+addons = [Rewrite()]
+```
+
+The kernel sandbox guarantees the app can't route around the proxy;
+the proxy enforces the application-layer policy.
+
 ## Command reference
 
 ```

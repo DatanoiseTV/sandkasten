@@ -168,9 +168,11 @@ fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> 
     let (daddr_fam, daddr_val) = match &from.host {
         crate::config::HostSpec::Ipv4(v) => ("ip", v.to_string()),
         crate::config::HostSpec::Ipv6(v) => ("ip6", v.to_string()),
+        crate::config::HostSpec::Ipv4Cidr(v, mask) => ("ip", format!("{v}/{mask}")),
+        crate::config::HostSpec::Ipv6Cidr(v, mask) => ("ip6", format!("{v}/{mask}")),
         crate::config::HostSpec::Name(_) | crate::config::HostSpec::Any => {
             return Err(anyhow!(
-                "redirect `from` must be an IP literal; got {:?} — use hosts_entries for hostnames",
+                "redirect `from` must be an IP or CIDR literal; got {:?} — use hosts_entries for hostnames",
                 r.from
             ))
         }
@@ -191,9 +193,15 @@ fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> 
                 "redirect `to` cannot be a port range — pick a single target port"
             ))
         }
-        (crate::config::HostSpec::Name(_), _) | (crate::config::HostSpec::Any, _) => {
+        (
+            crate::config::HostSpec::Name(_)
+            | crate::config::HostSpec::Any
+            | crate::config::HostSpec::Ipv4Cidr(_, _)
+            | crate::config::HostSpec::Ipv6Cidr(_, _),
+            _,
+        ) => {
             return Err(anyhow!(
-                "redirect `to` must be an IP[:port]; got {:?}",
+                "redirect `to` must be a single IP[:port] — CIDR / hostname / wildcard not allowed; got {:?}",
                 r.to
             ))
         }
