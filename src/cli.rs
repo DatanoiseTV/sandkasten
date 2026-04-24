@@ -1,5 +1,22 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, Args};
 use std::path::PathBuf;
+
+#[derive(Subcommand, Debug)]
+pub enum SnapCmd {
+    /// Save the profile's overlay upperdir under a named snapshot.
+    Save(SnapArgs),
+    /// Restore the profile's overlay upperdir from a named snapshot.
+    /// Existing upperdir contents are moved aside (to `<upper>.bak-<ts>`).
+    Load(SnapArgs),
+    /// List snapshots for a profile.
+    List { profile: String },
+}
+
+#[derive(Args, Debug)]
+pub struct SnapArgs {
+    pub profile: String,
+    pub name: String,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -88,6 +105,11 @@ pub enum Command {
     /// Pre-flight environment check: kernel features, supporting tools,
     /// and OS-specific install commands for anything missing.
     Doctor,
+
+    /// Save or restore the writable state of a profile's overlay upper
+    /// layer. Useful for "time-travel" over a sandbox that uses [overlay].
+    #[command(subcommand)]
+    Snap(SnapCmd),
 
     /// Write a starter profile to disk.
     Init {

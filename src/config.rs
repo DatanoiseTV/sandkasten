@@ -36,6 +36,13 @@ pub struct Profile {
     #[serde(default)]
     pub hardware: Hardware,
 
+    /// Hardware identity spoofing: CPU count, /proc/cpuinfo, DMI fields,
+    /// machine-id, hostname. Linux implements via sched_setaffinity +
+    /// bind-mounted synthetic files; macOS implements what the kernel
+    /// permits (hostname via UTS-equivalent) and documents the rest.
+    #[serde(default)]
+    pub spoof: Spoof,
+
     /// Simple cross-platform workspace — a persistent directory the sandbox
     /// sees as read+write, can `chdir` into on start, and that the user may
     /// pre-populate or inspect afterwards.
@@ -60,6 +67,44 @@ pub struct Workspace {
     /// workspace path. `--cwd` on the CLI still wins.
     #[serde(default)]
     pub chdir: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Spoof {
+    /// Limit the sandbox to N logical cores via `sched_setaffinity` (Linux).
+    /// `sysconf(_SC_NPROCESSORS_ONLN)` and everything derived from it (Go's
+    /// GOMAXPROCS default, Rust's `num_cpus`, most thread pools) will see
+    /// this count. `/proc/cpuinfo` still shows all cores — use
+    /// `cpuinfo_synth = true` to also bind-mount a synthetic file.
+    pub cpu_count: Option<u32>,
+
+    /// If true, generate a synthetic `/proc/cpuinfo` reflecting
+    /// `cpu_count` + the `cpuinfo_*` fields, and bind-mount it in the
+    /// sandbox's mount namespace. Linux only.
+    #[serde(default)]
+    pub cpuinfo_synth: bool,
+
+    /// Override the CPU model string in the synthetic /proc/cpuinfo.
+    pub cpuinfo_model: Option<String>,
+
+    /// Override the reported MHz per core.
+    pub cpuinfo_mhz: Option<u32>,
+
+    /// Hostname the sandbox sees. Linux: set via sethostname in our UTS
+    /// namespace (overrides the default `sandkasten`). macOS: set via the
+    /// `HOSTNAME` env var only — `hostname` syscall spoofing requires root.
+    pub hostname: Option<String>,
+
+    /// Spoof `/etc/machine-id` (32 hex chars, conventionally without dashes).
+    pub machine_id: Option<String>,
+
+    /// Linux DMI overrides — each field maps to a file under
+    /// `/sys/class/dmi/id/`. Common keys: `product_name`, `product_serial`,
+    /// `product_uuid`, `sys_vendor`, `board_name`, `board_serial`,
+    /// `bios_vendor`, `bios_version`, `chassis_serial`.
+    #[serde(default)]
+    pub dmi: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -627,6 +672,17 @@ impl Profile {
         out.hardware.audio  |= self.hardware.audio;
         out.hardware.gpu    |= self.hardware.gpu;
         out.hardware.camera |= self.hardware.camera;
+
+        // Spoof: child scalar wins where set.
+        out.spoof.cpu_count       = self.spoof.cpu_count.or(out.spoof.cpu_count);
+        out.spoof.cpuinfo_synth  |= self.spoof.cpuinfo_synth;
+        out.spoof.cpuinfo_model   = self.spoof.cpuinfo_model.or(out.spoof.cpuinfo_model);
+        out.spoof.cpuinfo_mhz     = self.spoof.cpuinfo_mhz.or(out.spoof.cpuinfo_mhz);
+        out.spoof.hostname        = self.spoof.hostname.or(out.spoof.hostname);
+        out.spoof.machine_id      = self.spoof.machine_id.or(out.spoof.machine_id);
+        for (k, v) in self.spoof.dmi {
+            out.spoof.dmi.insert(k, v);
+        }
 
         // Workspace & overlay: child scalars win when set.
         if self.workspace.path.is_some() {

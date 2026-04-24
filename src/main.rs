@@ -29,6 +29,8 @@ mod net_files;
 mod preflight;
 mod presets;
 mod signing;
+mod snapshot;
+mod spoofing;
 mod templates;
 mod ui;
 
@@ -253,6 +255,29 @@ fn run(args: cli::Cli) -> Result<i32> {
             let rp = config::finalize(config::load(&right)?, &ctx)?;
             print!("{}", explain::diff(&lp, &rp));
             Ok(0)
+        }
+        cli::Command::Snap(sub) => {
+            let ctx = config::ExpandContext::detect(None)?;
+            match sub {
+                cli::SnapCmd::Save(a) => {
+                    let prof = config::finalize(config::load(&a.profile)?, &ctx)?;
+                    let path = snapshot::save(&prof, &a.profile, &a.name)?;
+                    println!("saved to {}", path.display());
+                    Ok(0)
+                }
+                cli::SnapCmd::Load(a) => {
+                    let prof = config::finalize(config::load(&a.profile)?, &ctx)?;
+                    snapshot::load(&prof, &a.profile, &a.name)?;
+                    println!("restored {} for {}", a.name, a.profile);
+                    Ok(0)
+                }
+                cli::SnapCmd::List { profile } => {
+                    for name in snapshot::list(&profile)? {
+                        println!("{name}");
+                    }
+                    Ok(0)
+                }
+            }
         }
         cli::Command::Doctor => {
             let f = preflight::run_all();

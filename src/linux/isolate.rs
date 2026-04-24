@@ -108,6 +108,10 @@ fn child_main(
     // Runs inside our mount namespace so it doesn't affect the host.
     bind_overlay_netfiles(profile).context("bind-mounting dns/hosts overlays")?;
 
+    // Hardware identity spoofing — bind-mount synthetic /proc/cpuinfo,
+    // /etc/machine-id, /sys/class/dmi/id/*; pin affinity.
+    apply_spoofing(profile).context("applying spoofing")?;
+
     // Path rewire (bind-mount `to` over `from`).
     for r in &profile.filesystem.rewire {
         bind_over(std::path::Path::new(&r.to), std::path::Path::new(&r.from))
@@ -319,6 +323,69 @@ fn apply_overlayfs(profile: &crate::config::Profile) -> Result<()> {
         Some(opts.as_str()),
     )
     .with_context(|| format!("overlayfs mount at {mount_at} ({opts})"))?;
+    Ok(())
+}
+
+/// Apply spoofing from `[spoof]`: sched_setaffinity to pin CPU count,
+/// optional sethostname override (overrides the default "sandkasten"),
+/// and bind-mount each synth file over its target path.
+fn apply_spoofing(profile: &crate::config::Profile) -> Result<()> {
+    let spoof = &profile.spoof;
+
+    if let Some(name) = &spoof.hostname {
+        let _ = nix::unistd::sethostname(name.as_str());
+    }
+
+    if let Some(n) = spoof.cpu_count {
+        pin_affinity(n).context("sched_setaffinity")?;
+    }
+
+    let plan = crate::spoofing::plan(spoof);
+    if plan.is_empty() {
+        return Ok(());
+    }
+
+    let mock_dir = std::env::var_os("SANDKASTEN_MOCKS")
+        .ok_or_else(|| anyhow!("SANDKASTEN_MOCKS unset — mocks::materialise didn't run"))?;
+    let mock_dir = std::path::PathBuf::from(mock_dir);
+
+    for sf in &plan {
+        let base = sf
+            .target_path
+            .replace('/', "_")
+            .trim_start_matches('_')
+            .to_string();
+        let src = mock_dir.join(&base);
+        let dst = std::path::Path::new(&sf.target_path);
+        // Only bind-mount over targets that already exist; creating a
+        // new entry under /proc or /sys isn't portable.
+        if !dst.exists() {
+            eprintln!(
+                "sandkasten ⚠ spoof: target {} does not exist — skipping",
+                dst.display()
+            );
+            continue;
+        }
+        bind_over(&src, dst).with_context(|| format!("spoof bind {}", sf.target_path))?;
+    }
+    Ok(())
+}
+
+fn pin_affinity(n: u32) -> Result<()> {
+    // Build a cpu_set_t with the first `n` CPUs set.
+    // SAFETY: zeroed cpu_set_t is a valid (empty) affinity mask; CPU_SET is
+    // an async-signal-safe macro we replicate here with bit-ops.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        let hw = libc::sysconf(libc::_SC_NPROCESSORS_ONLN) as i64;
+        let effective = (n as i64).min(hw.max(1)) as usize;
+        for cpu in 0..effective {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+            return Err(std::io::Error::last_os_error()).context("sched_setaffinity");
+        }
+    }
     Ok(())
 }
 

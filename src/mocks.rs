@@ -22,8 +22,13 @@ pub struct Materialised {
 pub fn materialise(profile: &mut Profile) -> Result<Option<Materialised>> {
     let synth_resolv = crate::net_files::resolv_conf(&profile.network);
     let synth_hosts = crate::net_files::hosts_extra(&profile.network);
+    let synth_spoofs = crate::spoofing::plan(&profile.spoof);
 
-    if profile.mocks.files.is_empty() && synth_resolv.is_none() && synth_hosts.is_none() {
+    if profile.mocks.files.is_empty()
+        && synth_resolv.is_none()
+        && synth_hosts.is_none()
+        && synth_spoofs.is_empty()
+    {
         return Ok(None);
     }
 
@@ -55,6 +60,14 @@ pub fn materialise(profile: &mut Profile) -> Result<Option<Materialised>> {
     }
     if let Some(hs) = &synth_hosts {
         std::fs::write(dir.join("hosts"), hs).context("writing synth hosts")?;
+    }
+    // Synth spoof files: flatten target path → hashed basename so they all
+    // live as plain files in the mocks dir. The Linux child reads them back
+    // by asking `spoofing::plan(...)` again for the list (deterministic).
+    for sf in &synth_spoofs {
+        let base = sf.target_path.replace('/', "_").trim_start_matches('_').to_string();
+        std::fs::write(dir.join(&base), &sf.content)
+            .with_context(|| format!("writing spoof file for {}", sf.target_path))?;
     }
 
     // Expose the tempdir to the sandboxed process AND make it readable by
