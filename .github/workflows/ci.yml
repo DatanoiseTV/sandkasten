@@ -92,10 +92,16 @@ jobs:
         run: |
           cargo install --locked cargo-sbom
           cargo sbom --output-format=cyclone_dx_json_1_4 > sandkasten.cdx.json
-          # Sanity-check the document structure.
-          python3 -c 'import json,sys; d=json.load(open("sandkasten.cdx.json")); \
-            assert d["bomFormat"]=="CycloneDX"; \
-            print(f"SBOM OK: {len(d.get(\"components\",[]))} components")'
+          # Sanity-check the document structure. Inline `python -c` with
+          # backslash continuation is a footgun (the shell strips the
+          # backslash, Python sees a syntactically broken multi-line),
+          # so use a heredoc.
+          python3 <<'PY'
+          import json
+          d = json.load(open("sandkasten.cdx.json"))
+          assert d["bomFormat"] == "CycloneDX", f"unexpected bomFormat: {d.get('bomFormat')!r}"
+          print(f"SBOM OK: {len(d.get('components', []))} components")
+          PY
       - uses: actions/upload-artifact@v7
         with:
           name: sbom
