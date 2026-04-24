@@ -249,6 +249,57 @@ fn run(args: cli::Cli) -> Result<i32> {
             }
             rc
         }
+        cli::Command::Sshd { profile } => {
+            let raw = config::load(&profile)?;
+            let ctx = config::ExpandContext::detect(None)?;
+            let mut prof = config::finalize(raw, &ctx)?;
+
+            // Materialise mocks + workspace identically to `run`/`shell`.
+            let mock_handle = mocks::materialise(&mut prof)?;
+            if let Some(m) = &mock_handle {
+                prof.env.set.insert(m.env_var.0.clone(), m.env_var.1.clone());
+                // SAFETY: pre-fork, single-threaded.
+                unsafe { std::env::set_var(&m.env_var.0, &m.env_var.1); }
+            }
+            prof.env.set.insert(
+                "SANDKASTEN_PROFILE".into(),
+                prof.name.clone().unwrap_or_else(|| profile.clone()),
+            );
+
+            // Workspace chdir honoured exactly as in shell/run.
+            let mut effective_cwd: Option<PathBuf> = None;
+            if let Some(ws_path) = prof.workspace.path.clone() {
+                let ws = PathBuf::from(&ws_path);
+                std::fs::create_dir_all(&ws).ok();
+                if !prof.filesystem.read_write.iter().any(|p| p == &ws_path) {
+                    prof.filesystem.read_write.push(ws_path.clone());
+                }
+                prof.env.set.insert("SANDKASTEN_WORKSPACE".into(), ws_path);
+                if prof.workspace.chdir {
+                    effective_cwd = Some(ws);
+                }
+            }
+
+            // sshd sets `$SSH_ORIGINAL_COMMAND` when the user ran
+            // `ssh host some-command` — in that case we run it via sh -c.
+            // Otherwise the user got an interactive login; spawn their shell.
+            let argv: Vec<String> = match std::env::var("SSH_ORIGINAL_COMMAND") {
+                Ok(cmd) if !cmd.trim().is_empty() => {
+                    log::info(format_args!("sshd: running forced command under profile {profile:?}"));
+                    vec!["/bin/sh".into(), "-c".into(), cmd]
+                }
+                _ => {
+                    let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+                    log::info(format_args!("sshd: interactive shell {sh} under profile {profile:?}"));
+                    vec![sh, "-l".into()]
+                }
+            };
+            let rc = run_sandboxed(&prof, effective_cwd.as_deref(), &argv);
+            if let Some(m) = mock_handle {
+                let _ = std::fs::remove_dir_all(&m.dir);
+            }
+            rc
+        }
         cli::Command::Diff { left, right } => {
             let ctx = config::ExpandContext::detect(None)?;
             let lp = config::finalize(config::load(&left)?, &ctx)?;

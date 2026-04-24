@@ -105,6 +105,54 @@ pub struct Spoof {
     /// `bios_vendor`, `bios_version`, `chassis_serial`.
     #[serde(default)]
     pub dmi: std::collections::BTreeMap<String, String>,
+
+    /// Arbitrary synthetic file mounts (Linux). Each entry names an absolute
+    /// target path (must already exist in the sandbox's view) and inline
+    /// content. Used for UEFI variables, thermal zones, battery state,
+    /// anything surfaced through `/sys` or `/proc`.
+    #[serde(default)]
+    pub files: Vec<SpoofFile>,
+
+    /// Convenience: set every `/sys/class/thermal/thermal_zone*/temp` and
+    /// `/sys/class/hwmon/hwmon*/temp*_input` entry the sandbox's host
+    /// exposes to this value (degrees Celsius ×1000 is written into the
+    /// sysfs format). Linux only.
+    pub temperature_c: Option<i32>,
+
+    /// Convenience: override UEFI firmware platform size (32/64).
+    pub efi_platform_size: Option<u32>,
+
+    /// Convenience: say whether the firmware is EFI at all (true/false).
+    /// When false, /sys/firmware/efi is hidden via an empty bind-mount.
+    pub efi_enabled: Option<bool>,
+
+    /// Override the contents of `/proc/version` (kernel version string
+    /// reported by `uname -v` implementations that read this file, and
+    /// by any tool that opens it).
+    pub kernel_version: Option<String>,
+
+    /// Override `/proc/sys/kernel/osrelease` (the release version string).
+    pub kernel_release: Option<String>,
+
+    /// Override the contents of `/etc/os-release` — distribution identity.
+    pub os_release: Option<String>,
+
+    /// Override `/etc/issue` (pre-login banner).
+    pub issue: Option<String>,
+
+    /// Override `/etc/hostid` (8-byte binary file). Value is parsed as a
+    /// 32-bit hex integer and written as little-endian bytes.
+    pub hostid_hex: Option<String>,
+
+    /// Override `/etc/timezone` (Debian-family zone file).
+    pub timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpoofFile {
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -683,6 +731,16 @@ impl Profile {
         for (k, v) in self.spoof.dmi {
             out.spoof.dmi.insert(k, v);
         }
+        out.spoof.files.extend(self.spoof.files);
+        out.spoof.temperature_c     = self.spoof.temperature_c.or(out.spoof.temperature_c);
+        out.spoof.efi_platform_size = self.spoof.efi_platform_size.or(out.spoof.efi_platform_size);
+        out.spoof.efi_enabled       = self.spoof.efi_enabled.or(out.spoof.efi_enabled);
+        out.spoof.kernel_version    = self.spoof.kernel_version.or(out.spoof.kernel_version);
+        out.spoof.kernel_release    = self.spoof.kernel_release.or(out.spoof.kernel_release);
+        out.spoof.os_release        = self.spoof.os_release.or(out.spoof.os_release);
+        out.spoof.issue             = self.spoof.issue.or(out.spoof.issue);
+        out.spoof.hostid_hex        = self.spoof.hostid_hex.or(out.spoof.hostid_hex);
+        out.spoof.timezone          = self.spoof.timezone.or(out.spoof.timezone);
 
         // Workspace & overlay: child scalars win when set.
         if self.workspace.path.is_some() {
@@ -964,11 +1022,21 @@ fn merge_parents(mut p: Profile) -> Result<Profile> {
 }
 
 /// Finalize a profile: expand path variables using `ctx`, expand named
-/// protocol/service presets and hardware-access flags, then validate.
+/// protocol/service presets and hardware-access flags, propagate spoof
+/// conveniences, then validate.
 pub fn finalize(mut p: Profile, ctx: &ExpandContext) -> Result<Profile> {
     p.expand_paths(ctx)?;
     crate::presets::expand(&mut p);
     crate::hardware::expand(&mut p);
+
+    // efi_enabled = false → hide /sys/firmware/efi entirely.
+    if p.spoof.efi_enabled == Some(false) {
+        let efi = "/sys/firmware/efi".to_string();
+        if !p.filesystem.hide.iter().any(|x| x == &efi) {
+            p.filesystem.hide.push(efi);
+        }
+    }
+
     p.validate()?;
     Ok(p)
 }

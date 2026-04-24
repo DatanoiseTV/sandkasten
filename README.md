@@ -214,6 +214,37 @@ host = "tracking.example.com"
 port = "*"                    # omit or "*" for all ports
 protocol = "tcp"
 
+# Hardware identity spoofing (Linux fully, macOS best-effort).
+[spoof]
+cpu_count       = 4                  # sched_setaffinity pins to N cores
+cpuinfo_synth   = true                # bind-mount a synth /proc/cpuinfo
+cpuinfo_model   = "CustomCPU 2.0"
+cpuinfo_mhz     = 3200
+hostname        = "rig-42"            # sethostname in UTS ns
+machine_id      = "deadbeef..."       # synth /etc/machine-id
+[spoof.dmi]
+product_serial  = "ZZZ-000"
+system_uuid     = "00000000-0000-0000-0000-012345678abc"
+board_name      = "FakeBoard X99"
+
+# Hardware access — expand into the right paths and Mach services.
+[hardware]
+usb    = true    # libusb / /dev/bus/usb on Linux, IOKit+USB Mach services on macOS
+serial = true    # /dev/ttyUSB* /dev/ttyACM* / /dev/cu.usbserial*
+audio  = true    # ALSA / PulseAudio on Linux, CoreAudio on macOS
+gpu    = true    # /dev/dri on Linux, Metal + IOAcceleratorFamily2 on macOS
+camera = true    # V4L2 on Linux, AVFoundation assistants on macOS
+
+# Path rewire (Linux): "inside the sandbox, /a points to /b".
+[[filesystem.rewire]]
+from = "/etc/resolv.conf"
+to   = "/run/sandkasten/my-resolv.conf"
+
+# Hide paths from the sandbox so ls/stat see empty content rather than EPERM.
+# Linux: tmpfs over directories, /dev/null over files.
+[filesystem]
+hide = ["/etc/shadow", "/sys/class/dmi"]
+
 # Persistent workspace: cross-platform. Directory is auto-created, added
 # to read_write, exposed to the sandbox as $SANDKASTEN_WORKSPACE, and
 # optionally set as the initial CWD. Pre-populate it or inspect it

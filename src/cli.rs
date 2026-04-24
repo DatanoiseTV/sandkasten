@@ -89,6 +89,19 @@ pub enum Command {
         cwd: Option<PathBuf>,
     },
 
+    /// Intended for use as sshd's `ForceCommand`. If `$SSH_ORIGINAL_COMMAND`
+    /// is set (the user ran `ssh host some-cmd`) it is executed via
+    /// `/bin/sh -c` inside the sandbox; otherwise an interactive shell
+    /// is launched.
+    ///
+    /// Example sshd_config:
+    ///     Match User sandboxed
+    ///         ForceCommand /usr/local/bin/sandkasten sshd dev
+    Sshd {
+        /// Profile to apply to every SSH login.
+        profile: String,
+    },
+
     /// Structural diff between two profiles — what each grants that the other
     /// does not. Works with built-in names, paths, and user profiles.
     Diff {

@@ -131,6 +131,92 @@ fn apply_preset(p: &mut Profile, name: &str) {
             p.network.allow_icmp = true;
             p.network.allow_icmpv6 = true;
         }
+        "tcpdump" | "pcap" | "wireshark" => {
+            // Packet capture requires raw sockets. Inside a user namespace
+            // we hold CAP_NET_RAW for the sandbox's private netns, which is
+            // enough for AF_PACKET on its own interfaces.
+            p.network.allow_raw_sockets = true;
+            p.network.allow_icmp = true;
+            p.network.allow_icmpv6 = true;
+        }
+        "nmap" => {
+            // nmap falls back to TCP connect scans without raw sockets but
+            // SYN / ICMP / UDP scans need them. Grant both.
+            p.network.allow_raw_sockets = true;
+            p.network.allow_icmp = true;
+            p.network.allow_icmpv6 = true;
+            p.network.allow_dns = true;
+        }
+
+        // ─── VPN / tunnels ───────────────────────────────
+        "wireguard" => {
+            // Default WG port. Users running on a custom port should list
+            // that explicitly in outbound_udp.
+            add_udp(p, "*:51820");
+        }
+        "openvpn" => {
+            add_udp(p, "*:1194");
+            add_tcp(p, "*:1194");
+        }
+        "tailscale" => {
+            // Tailscale control plane over HTTPS + DERP, plus WireGuard.
+            add_tcp(p, "*:443");
+            add_udp(p, "*:41641"); // DERP default
+            add_udp(p, "*:3478");  // STUN
+            p.network.allow_dns = true;
+        }
+        "ipsec" | "strongswan" => {
+            add_udp(p, "*:500");
+            add_udp(p, "*:4500");
+        }
+        "wireguard-all-udp" => {
+            // If you don't know the port and trust the peer, allow any UDP.
+            add_udp(p, "*:*");
+        }
+
+        // ─── games ───────────────────────────────────────
+        "minecraft" | "minecraft-java" => {
+            add_tcp(p, "*:25565");
+        }
+        "minecraft-bedrock" => {
+            add_udp(p, "*:19132");
+            add_udp(p, "*:19133");
+        }
+        "steam" => {
+            // Steamworks control ports. Extensive list from Valve's docs.
+            add_tcp(p, "*:27015");
+            add_tcp(p, "*:27036");
+            add_udp(p, "*:27015");
+            add_udp(p, "*:27031-27036");
+            add_udp(p, "*:4380");
+            add_tcp(p, "*:443"); // Steam client calls out over 443 for auth
+            p.network.allow_dns = true;
+        }
+        "source-engine" | "valve-source" => {
+            // CS:GO, TF2, Left 4 Dead, Garry's Mod, etc.
+            add_udp(p, "*:27000-27100");
+            add_tcp(p, "*:27015");
+        }
+        "quake3" | "idtech3" => {
+            add_udp(p, "*:27960-27969");
+        }
+        "teamspeak" => {
+            add_udp(p, "*:9987");
+            add_tcp(p, "*:10011");
+            add_tcp(p, "*:30033");
+        }
+        "discord-voice" => {
+            // Discord RTP via a large UDP range, plus control.
+            add_udp(p, "*:50000-65535");
+            add_tcp(p, "*:443");
+        }
+        "riot-games" => {
+            // League of Legends, Valorant — wide UDP ephemeral + TCP control.
+            add_udp(p, "*:5000-5500");
+            add_tcp(p, "*:2099");
+            add_tcp(p, "*:5222");
+            add_tcp(p, "*:5223");
+        }
 
         other => {
             eprintln!("sandkasten ⚠ unknown preset {other:?} — ignored (see README for the list)");
