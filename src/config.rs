@@ -564,6 +564,31 @@ pub struct Process {
     /// bits for sandboxed processes at the kernel MAC layer.
     #[serde(default)]
     pub block_setid_syscalls: bool,
+
+    /// Memory W^X: forbid mprotect(..., PROT_EXEC) on any page that was
+    /// ever writable, via `prctl(PR_SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN)`
+    /// (Linux 6.3+). Blocks the entire "write shellcode, flip to
+    /// executable, jump to it" class of memory corruption exploits.
+    ///
+    /// **Breaks legitimate JIT compilers** (V8, SpiderMonkey, LuaJIT,
+    /// Java HotSpot, PHP JIT, many Pythons with Cython-JIT) — so it's
+    /// opt-in. Safe for shells, CLI utilities, compiled static binaries,
+    /// and anything that doesn't call `mprotect(...PROT_EXEC)` on its
+    /// own anonymous mappings.
+    #[serde(default)]
+    pub no_w_x: bool,
+
+    /// Disable indirect branch speculation and speculative store bypass
+    /// for the sandboxed process only, via
+    /// `prctl(PR_SET_SPECULATION_CTRL, ..., PR_SPEC_FORCE_DISABLE)` for
+    /// both `PR_SPEC_INDIRECT_BRANCH` (Spectre v2) and
+    /// `PR_SPEC_STORE_BYPASS` (Spectre v4 / SSBD). Mitigates speculative
+    /// execution side-channel attacks reachable from inside the sandbox.
+    ///
+    /// Costs ~2-5% CPU on branch-heavy workloads, so it's opt-in. No
+    /// functional breakage — just slower.
+    #[serde(default)]
+    pub mitigate_spectre: bool,
 }
 
 impl Process {
@@ -886,6 +911,8 @@ impl Profile {
         // result blocks it (more-restrictive wins for security toggles).
         out.process.block_privilege_elevation |= self.process.block_privilege_elevation;
         out.process.block_setid_syscalls |= self.process.block_setid_syscalls;
+        out.process.no_w_x |= self.process.no_w_x;
+        out.process.mitigate_spectre |= self.process.mitigate_spectre;
 
         // System
         out.system.allow_sysctl_read |= self.system.allow_sysctl_read;

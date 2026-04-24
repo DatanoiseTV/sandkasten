@@ -523,6 +523,16 @@ block_privilege_elevation  = false
 # already prevented from honouring setuid bits inside the sandbox at
 # the kernel MAC layer.
 block_setid_syscalls       = false
+# Memory W^X: forbid mprotect(..., PROT_EXEC) on any page that was
+# ever writable (Linux 6.3+, PR_SET_MDWE). Blocks the entire "write
+# shellcode, flip to executable, jump to it" exploit class. Breaks
+# JITs (V8, LuaJIT, Java HotSpot, PHP JIT, ...) — opt-in.
+no_w_x                     = false
+# Force-disable indirect branch speculation (Spectre v2) and
+# speculative store bypass (Spectre v4 / SSBD) for the sandboxed
+# process via PR_SET_SPECULATION_CTRL. Mitigates speculative side
+# channels reachable from inside the sandbox. Costs ~2-5% CPU. Opt-in.
+mitigate_spectre           = false
 
 [system]
 allow_sysctl_read = true
@@ -831,6 +841,11 @@ Dual-licensed under **MIT** or **Apache-2.0** at your option.
       `DYLD_INSERT_LIBRARIES`
 - [ ] Live policy reload (SIGHUP → re-apply; sandbox_init only narrows)
 - [x] Homebrew tap published at `DatanoiseTV/sandkasten`
+- [x] Anti-exploitation: unconditional TIOCSTI block (seccomp ioctl-arg
+      filter); opt-in `process.no_w_x` (PR_SET_MDWE) and
+      `process.mitigate_spectre` (PR_SET_SPECULATION_CTRL) on Linux.
+- [x] pasta + slirp4netns auto-integration on Linux for per-IP outbound
+      filtering without giving up OOB external connectivity.
 - [x] `process.block_privilege_elevation` + `process.block_setid_syscalls`
       (sudo/su/doas/pkexec exec deny + seccomp setid family deny)
 - [x] `sandkasten learn --yes` non-interactive capture for scripts / CI

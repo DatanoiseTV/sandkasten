@@ -207,6 +207,16 @@ fn child_main(
     //   - PR_SET_KEEPCAPS=0 : don't preserve capabilities across setuid.
     harden_prctl().context("prctl hardening")?;
 
+    // Opt-in anti-exploitation knobs. Kept separate from the always-on
+    // hardening because each of these has a real downside (broken JITs,
+    // measurable CPU overhead) that makes them wrong as defaults.
+    if profile.process.no_w_x {
+        apply_mdwe().context("prctl PR_SET_MDWE")?;
+    }
+    if profile.process.mitigate_spectre {
+        apply_spectre_mitigations().context("prctl PR_SET_SPECULATION_CTRL")?;
+    }
+
     // Apply Landlock filesystem restrictions.
     lock.apply().context("landlock restrict_self")?;
 
@@ -450,6 +460,86 @@ fn harden_prctl() -> Result<()> {
     // We drop the scary ones so even if a future syscall sneaks past
     // seccomp, it can't be invoked with privilege.
     drop_caps();
+    Ok(())
+}
+
+/// Memory deny-write-execute: forbid mprotect() from flipping any page
+/// to PROT_EXEC if it was ever writable, via
+/// `prctl(PR_SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN, 0, 0, 0)` — introduced
+/// in Linux 6.3. Breaks shellcode that writes to RW anonymous mappings
+/// and then mprotects them to RX, which is the canonical pattern for
+/// every "I have arbitrary write primitive, now let me get code exec"
+/// exploit chain against a sandboxed process.
+///
+/// Fails loudly on kernels < 6.3 (EINVAL); the caller's `Result` plumbs
+/// that back to the user's `sandkasten run`. The flag defaults to off
+/// precisely because it breaks JITs; turning it on is a conscious
+/// security-vs-compat choice.
+fn apply_mdwe() -> Result<()> {
+    // libc's prctl bindings don't define PR_SET_MDWE / PR_MDWE_* yet on
+    // every platform — inline the numbers from linux/prctl.h.
+    const PR_SET_MDWE: libc::c_int = 65;
+    const PR_MDWE_REFUSE_EXEC_GAIN: libc::c_ulong = 1;
+    // SAFETY: prctl with documented constants.
+    let rc = unsafe {
+        libc::prctl(
+            PR_SET_MDWE,
+            PR_MDWE_REFUSE_EXEC_GAIN,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+            0 as libc::c_ulong,
+        )
+    };
+    if rc != 0 {
+        let errno = std::io::Error::last_os_error();
+        if errno.raw_os_error() == Some(libc::EINVAL) {
+            return Err(anyhow!(
+                "PR_SET_MDWE (no_w_x) requires Linux 6.3+; current kernel doesn't support it"
+            ));
+        }
+        return Err(errno).context("PR_SET_MDWE");
+    }
+    Ok(())
+}
+
+/// Disable indirect branch speculation (Spectre v2) and speculative
+/// store bypass (Spectre v4 / SSBD) for the current process, via
+/// `prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_*, PR_SPEC_FORCE_DISABLE)`.
+///
+/// A sandboxed process can be a Spectre gadget reachable from the
+/// host via trained branch predictors / BCB state. Forcing the
+/// mitigations on for THIS process doesn't affect the rest of the
+/// system but closes the gadget. Costs ~2-5% on branch-heavy code.
+///
+/// Non-fatal on kernels that don't support either control (we
+/// warn-and-continue). Both prctls are independent.
+fn apply_spectre_mitigations() -> Result<()> {
+    const PR_SET_SPECULATION_CTRL: libc::c_int = 53;
+    const PR_SPEC_STORE_BYPASS: libc::c_ulong = 0;
+    const PR_SPEC_INDIRECT_BRANCH: libc::c_ulong = 1;
+    const PR_SPEC_FORCE_DISABLE: libc::c_ulong = 1 << 3;
+    for (label, which) in [
+        ("PR_SPEC_INDIRECT_BRANCH", PR_SPEC_INDIRECT_BRANCH),
+        ("PR_SPEC_STORE_BYPASS", PR_SPEC_STORE_BYPASS),
+    ] {
+        // SAFETY: prctl with documented constants.
+        let rc = unsafe {
+            libc::prctl(
+                PR_SET_SPECULATION_CTRL,
+                which,
+                PR_SPEC_FORCE_DISABLE,
+                0 as libc::c_ulong,
+                0 as libc::c_ulong,
+            )
+        };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            // Log and keep going — on some CPUs/kernels one of the
+            // two controls is unsupported (ENODEV / ENXIO) while the
+            // other works. That's still a net win.
+            eprintln!("sandkasten ⚠ {label} mitigation not enforced ({e}) — continuing without it");
+        }
+    }
     Ok(())
 }
 

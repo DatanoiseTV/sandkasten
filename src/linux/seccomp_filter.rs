@@ -6,8 +6,18 @@
 
 use crate::config::Profile;
 use anyhow::{Context, Result};
-use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch};
+use seccompiler::{
+    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+    SeccompRule, TargetArch,
+};
 use std::collections::BTreeMap;
+
+// TIOCSTI: the ioctl that injects characters into the current
+// controlling terminal's input buffer. Classic sandbox-escape primitive
+// when the sandboxed process inherits the parent's TTY — attacker types
+// "rm -rf /\n" via ioctl, parent shell executes it. Block unconditionally
+// via a conditional seccomp rule on ioctl's 2nd arg.
+const TIOCSTI: u64 = 0x5412;
 
 pub fn install(profile: &Profile) -> Result<()> {
     let arch = if cfg!(target_arch = "x86_64") {
@@ -113,6 +123,20 @@ pub fn install(profile: &Profile) -> Result<()> {
     for &nr in blocked.iter().chain(extra_blocked.iter()) {
         rules.insert(nr, vec![]);
     }
+
+    // Conditional deny on `ioctl` when the cmd == TIOCSTI. Other ioctls
+    // (stat, tty size queries, signalfd operations, etc.) stay allowed.
+    // This is always on — there is no legitimate need for a sandboxed
+    // process to inject characters into the parent's TTY.
+    let tiocsti_rule = SeccompRule::new(vec![SeccompCondition::new(
+        1,
+        SeccompCmpArgLen::Dword,
+        SeccompCmpOp::Eq,
+        TIOCSTI,
+    )
+    .context("seccomp cond for TIOCSTI")?])
+    .context("seccomp rule for TIOCSTI")?;
+    rules.insert(libc::SYS_ioctl, vec![tiocsti_rule]);
 
     // Optional: block the setuid-family syscalls. Enabled either directly
     // via `process.block_setid_syscalls` or transitively via
