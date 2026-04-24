@@ -24,6 +24,31 @@ jobs:
       - run: cargo build --release
       - run: cargo test --release
 
+  swift-ui:
+    name: Swift UI (macOS, builds the .app)
+    runs-on: macos-latest
+    needs: macos   # needs the CLI to embed in the bundle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: swift build
+        working-directory: swift-ui
+        run: swift build -c release
+      - name: Generate icon + package .app
+        working-directory: swift-ui
+        run: |
+          swift icon/generate-icon.swift
+          ./build-app.sh
+      - name: Sanity-check bundle
+        working-directory: swift-ui
+        run: |
+          test -x .build/Sandkasten.app/Contents/MacOS/Sandkasten
+          test -x .build/Sandkasten.app/Contents/Resources/sandkasten
+          .build/Sandkasten.app/Contents/Resources/sandkasten --version
+          plutil -lint .build/Sandkasten.app/Contents/Info.plist
+
   linux:
     name: Linux (build + clippy + test)
     runs-on: ubuntu-latest

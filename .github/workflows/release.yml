@@ -1,0 +1,224 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Per-target CLI builds. Artefacts are stripped, tarballed, named
+  # `sandkasten-<tag>-<target>.tar.gz`, and uploaded to the
+  # workflow-run artefacts so the release job can collect them.
+  # ──────────────────────────────────────────────────────────────────
+  build-cli:
+    name: CLI (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # aarch64-unknown-linux-gnu needs a cross linker on x86 runners.
+      - name: Install cross linker (aarch64 linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          NAME="sandkasten-${TAG}-${{ matrix.target }}"
+          mkdir -p "dist/${NAME}"
+
+          BIN="target/${{ matrix.target }}/release/sandkasten"
+          # Strip to shrink the tarball. Best-effort per-target.
+          if [[ "${{ matrix.target }}" == *-linux-* ]]; then
+            strip "${BIN}" || true
+          elif [[ "${{ matrix.target }}" == *-apple-darwin ]]; then
+            strip -x "${BIN}" || true
+          fi
+
+          cp "${BIN}" "dist/${NAME}/sandkasten"
+          cp README.md LICENSE-MIT LICENSE-APACHE "dist/${NAME}/"
+
+          # Shell completions — generated on the current host arch, so
+          # only build them on native runners.
+          if [[ "${{ matrix.target }}" == *-apple-darwin && "$(uname -m)" == "arm64" ]] ||
+             [[ "${{ matrix.target }}" == *-linux-gnu && "$(uname -m)" == "x86_64" ]]; then
+            mkdir -p "dist/${NAME}/completions"
+            "${BIN}" completions bash > "dist/${NAME}/completions/sandkasten.bash"
+            "${BIN}" completions zsh  > "dist/${NAME}/completions/_sandkasten"
+            "${BIN}" completions fish > "dist/${NAME}/completions/sandkasten.fish"
+          fi
+
+          tar -czf "${NAME}.tar.gz" -C dist "${NAME}"
+          shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          ls -la "${NAME}.tar.gz"*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: |
+            sandkasten-*.tar.gz
+            sandkasten-*.tar.gz.sha256
+
+  # ──────────────────────────────────────────────────────────────────
+  # Swift UI .app — macOS only.
+  # ──────────────────────────────────────────────────────────────────
+  build-macos-app:
+    name: SwiftUI .app bundle
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app
+
+      - name: Build CLI for aarch64 (bundle target)
+        run: cargo build --release
+
+      - name: Build Swift UI
+        working-directory: swift-ui
+        run: |
+          set -euo pipefail
+          # Regenerate the icon so the artefact carries the freshest one.
+          swift icon/generate-icon.swift
+          ./build-app.sh
+
+      - name: Package .app
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          NAME="Sandkasten-${TAG}-macOS"
+          APP="swift-ui/.build/Sandkasten.app"
+          if [[ ! -d "${APP}" ]]; then
+            echo "ERROR: ${APP} not found after build" >&2
+            exit 1
+          fi
+          ditto -c -k --keepParent "${APP}" "${NAME}.zip"
+          shasum -a 256 "${NAME}.zip" > "${NAME}.zip.sha256"
+          ls -la "${NAME}.zip"*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            Sandkasten-*.zip
+            Sandkasten-*.zip.sha256
+
+  # ──────────────────────────────────────────────────────────────────
+  # Assemble the GitHub Release from every artefact produced above.
+  # ──────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-cli, build-macos-app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags + log for release notes
+
+      - name: Download all artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          find artifacts -type f \( -name '*.tar.gz*' -o -name '*.zip*' \) \
+            -exec cp -v {} release-files/ \;
+          ls -la release-files/
+
+      - name: Build release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          PREV_TAG="$(git tag --sort=-creatordate | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v -x "${TAG}" | head -1 || echo '')"
+          {
+            echo "## sandkasten ${TAG}"
+            echo
+            if [[ -n "${PREV_TAG}" ]]; then
+              echo "Commits since \`${PREV_TAG}\`:"
+              echo
+              echo '```'
+              git log --pretty=format:"%h %s" "${PREV_TAG}..${TAG}"
+              echo
+              echo '```'
+              echo
+            fi
+            echo "### Install"
+            echo
+            echo "**Homebrew:** \`brew tap DatanoiseTV/sandkasten && brew install sandkasten\`"
+            echo
+            echo "**Direct download:** pick the tarball matching your platform below. SHA-256 files ship alongside each artefact."
+            echo
+            echo "- \`sandkasten-${TAG}-aarch64-apple-darwin.tar.gz\` — macOS Apple Silicon"
+            echo "- \`sandkasten-${TAG}-x86_64-apple-darwin.tar.gz\` — macOS Intel"
+            echo "- \`sandkasten-${TAG}-x86_64-unknown-linux-gnu.tar.gz\` — Linux x86_64"
+            echo "- \`sandkasten-${TAG}-aarch64-unknown-linux-gnu.tar.gz\` — Linux arm64"
+            echo "- \`Sandkasten-${TAG}-macOS.zip\` — native SwiftUI .app bundle (macOS)"
+            echo
+            echo "### Verify"
+            echo
+            echo '```sh'
+            echo "shasum -a 256 -c sandkasten-${TAG}-*-sha256  # or any individual .sha256"
+            echo '```'
+          } > RELEASE_NOTES.md
+          echo "path=RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.tag }}
+          name: sandkasten ${{ github.ref_name || github.event.inputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+          files: release-files/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
