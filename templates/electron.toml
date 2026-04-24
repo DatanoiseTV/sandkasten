@@ -13,6 +13,14 @@ read_write = [
     "~/Library/Preferences",
     "~/Library/Saved Application State",
     "~/Library/Logs",
+    # Electron apps (VS Code, Slack, Discord, Obsidian, Signal, Spotify,
+    # …) store ALL their runtime state under ~/Library/Application Support/
+    # <AppName>/ — preferences JSON, extensions, IndexedDB/SQLite, log
+    # subdirs, Crashpad reports, SingletonLock files. Without this the
+    # very first boot fails with "mkdir .../Application Support/<App>/
+    # logs/…: Operation not permitted". The deny list below still
+    # excludes com.apple.TCC and similar sensitive subtrees.
+    "~/Library/Application Support",
 ]
 deny = [
     "~/.ssh",
