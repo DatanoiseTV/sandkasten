@@ -21,6 +21,14 @@ read = [
     "/private/var/db/timezone",
     "/private/var/db/mds",
     "/dev",
+    # macOS's /usr/bin/{git,python3,clang,make,...} are thin xcrun stubs
+    # that dlopen libxcrun.dylib and then exec the real binary under
+    # either Xcode.app or the Command Line Tools bundle. Without read
+    # access to at least one of these the stub fails with
+    # "unable to load libxcrun" before the real tool runs. Both paths
+    # are system-managed and read-only on disk, so the cost is low.
+    "/Library/Developer/CommandLineTools",
+    "/Applications/Xcode.app",
 ]
 read_files = [
     "/etc/hosts",

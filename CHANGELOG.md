@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.3.0 — 2026-04-24
+
+### New: privilege-elevation + setuid/setgid guardrails
+
+Two new cross-platform profile flags under `[process]`:
+
+- `block_privilege_elevation = true` — denies exec of the classic
+  escalation binaries on both macOS and Linux. The binary list covers
+  the standard *nix system paths (`/usr/bin/sudo`, `/usr/bin/su`,
+  `/bin/su`, `/usr/bin/doas`, `/usr/bin/pkexec`, `/usr/bin/runuser`,
+  `/usr/sbin/visudo`, `/usr/libexec/doas`), the common package-manager
+  installs (Homebrew, Linuxbrew, Snap), and `/usr/local/bin/...` for
+  locally-compiled builds. Useful specifically when the host user has
+  `NOPASSWD: ALL` in sudoers or cached credentials — without it, a
+  compromised sandboxed tool could re-exec through `sudo` and end up
+  running as host-root before the user notices. Implies
+  `block_setid_syscalls`.
+
+- `block_setid_syscalls = true` — seccomp-denies the setuid-family
+  syscalls (`setuid`, `setgid`, `setreuid`, `setregid`, `setresuid`,
+  `setresgid`, `setfsuid`, `setfsgid`, `setgroups`) on Linux, so even
+  shellcode that skips the elevation binary and calls the syscall
+  directly gets `EPERM`. Linux-only; macOS already prevents the
+  sandboxed process from honouring setuid bits at the kernel MAC
+  layer.
+
+Under the hood:
+- **macOS:** emits `(deny process-exec (literal "/usr/bin/sudo"))` and
+  friends in the generated SBPL. Seatbelt already refuses to honour
+  setuid inside the sandbox, but the explicit deny makes the policy
+  discoverable instead of hidden in kernel-level MAC behaviour.
+- **Linux:** binary-level denial follows naturally from the Landlock
+  allow-list (the elevation binaries aren't normally on it); the new
+  seccomp filter is the real enforcement, and fires even on profiles
+  that *do* grant a broad exec subtree.
+
+Both flags default to `false` (no behaviour change in existing
+profiles). Turn them on in any profile that runs user-supplied code.
+
+### Template fixes (from continued dogfood pass)
+
+- `strict`: allow read on `/Library/Developer/CommandLineTools` and
+  `/Applications/Xcode.app` so Apple's xcrun-shim binaries
+  (`/usr/bin/git`, `/usr/bin/python3`, `/usr/bin/clang`, …) can find
+  and re-exec the real tool.
+- `minimal-cli`: grant read on `${CWD}` so the advertised use case
+  (`awk` / `sed` / `sort` / `wc` / `grep <file-in-cwd>`) actually
+  works. Writes stay denied.
+- `network-client`: grant `read_write` on `/private/var/folders`
+  (macOS `$TMPDIR`) and `/tmp` so xcrun can cache its database —
+  without this every xcrun-shim binary fails with "couldn't create
+  cache file" before it ever reaches the network.
+- `dev`: add the `web` + `ssh` presets so `git clone`, `npm install`,
+  `pip install`, `cargo fetch` etc. can actually reach the network
+  without the user having to hand-extend the profile. The description
+  previously claimed "localhost network" which was literally true
+  and quietly catastrophic.
+
 ## v0.2.2 — 2026-04-24
 
 One-line follow-up to v0.2.1: `allow_unix_sockets` now also grants
