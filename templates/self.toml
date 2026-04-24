@@ -3,17 +3,38 @@ description = "Default. Sandboxed app sees only its own working directory (${CWD
 extends = "minimal-cli"
 
 [filesystem]
+# Broad read so dyld / dlopen / firmlinked system bundles always load.
+# macOS 11+ moved many system files under /System/Volumes/Preboot/
+# and /System/Cryptexes/ via firmlinks that are hard to enumerate up front.
+# On Linux the usual /usr /etc /lib /lib64 are all covered by this.
+read = ["/"]
+
 # The sandbox's "own folder" — read+write access to the working directory
 # sandkasten was invoked from. ${CWD} is expanded at runtime.
 read_write = [
     "${CWD}",
 ]
-# Defensive deny for user secrets, in case ${CWD} happens to be deep inside $HOME.
+
+# Defensive deny for user secrets. Evaluated after allow, so these win
+# against `read = ["/"]` above on macOS (Seatbelt last-match-wins). On
+# Linux Landlock is allow-list only — to enforce these deny paths there,
+# narrow `read` further or keep the allow-list specific.
 deny = [
     "${HOME}/.ssh",
     "${HOME}/.aws",
+    "${HOME}/.gnupg",
     "${HOME}/.config/gcloud",
+    "${HOME}/.docker",
+    "${HOME}/.kube",
+    "${HOME}/.netrc",
+    "${HOME}/.password-store",
     "${HOME}/Library/Keychains",
+    "${HOME}/Library/Application Support/com.apple.TCC",
+    "${HOME}/Library/Cookies",
+    "${HOME}/Library/Mail",
+    "${HOME}/Library/Messages",
+    "${HOME}/.bash_history",
+    "${HOME}/.zsh_history",
 ]
 
 [network]

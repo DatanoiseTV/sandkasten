@@ -275,6 +275,26 @@ pub fn generate(p: &Profile) -> String {
             );
         }
     }
+    if !p.filesystem.hide.is_empty() {
+        s.push_str(";; --- hide paths (macOS best-effort — returns EPERM, not ENOENT) ---\n");
+        for path in &p.filesystem.hide {
+            let _ = writeln!(
+                s,
+                "(deny file-read* file-write* (subpath {}))",
+                quote(path)
+            );
+        }
+        s.push_str(
+            ";; NOTE: macOS cannot make denied paths look like ENOENT without a\n\
+             ;; DYLD_INSERT_LIBRARIES interposer. The sandbox returns EPERM instead.\n",
+        );
+    }
+    if !p.filesystem.rewire.is_empty() {
+        s.push_str(
+            ";; NOTE: [[filesystem.rewire]] is Linux-only (mount-namespace bind).\n\
+             ;; On macOS, prefer symlinks on disk under the sandbox's writable area.\n",
+        );
+    }
 
     // --- network blocks (best-effort on macOS — grammar limits us) --------
     if !p.network.blocks.is_empty() {

@@ -245,20 +245,29 @@ fn emit_block(rules: &mut String, b: &crate::config::Block) -> Result<()> {
 fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()> {
     let e = crate::config::parse_endpoint(endpoint)
         .with_context(|| format!("parse endpoint {endpoint}"))?;
-    let port_clause = match e.port {
+    // Separate proto/port clause from the host/daddr clause so we don't emit
+    // double `{proto}` tokens when there is no explicit daddr match.
+    let port_match = match e.port {
         PortSpec::Any => String::new(),
-        PortSpec::Num(n) => format!(" {proto} dport {n}"),
-        PortSpec::Range(lo, hi) => format!(" {proto} dport {lo}-{hi}"),
+        PortSpec::Num(n) => format!("dport {n}"),
+        PortSpec::Range(lo, hi) => format!("dport {lo}-{hi}"),
     };
+    // Renders "<proto> <port_match>" when both are present, just one when not.
+    let proto_port = if port_match.is_empty() {
+        format!("meta l4proto {proto}")
+    } else {
+        format!("{proto} {port_match}")
+    };
+
     match e.host {
         HostSpec::Any => {
-            rules.push_str(&format!("        {proto}{port_clause} accept\n"));
+            rules.push_str(&format!("        {proto_port} accept\n"));
         }
         HostSpec::Ipv4(v4) => {
-            rules.push_str(&format!("        ip daddr {v4}{port_clause} accept\n"));
+            rules.push_str(&format!("        ip daddr {v4} {proto_port} accept\n"));
         }
         HostSpec::Ipv6(v6) => {
-            rules.push_str(&format!("        ip6 daddr {v6}{port_clause} accept\n"));
+            rules.push_str(&format!("        ip6 daddr {v6} {proto_port} accept\n"));
         }
         HostSpec::Name(n) => {
             // nftables does not resolve hostnames at rule-load time.
@@ -270,11 +279,11 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
                     for a in addrs {
                         match a {
                             std::net::SocketAddr::V4(v) => rules.push_str(&format!(
-                                "        ip daddr {}{port_clause} accept  # {n}\n",
+                                "        ip daddr {} {proto_port} accept  # {n}\n",
                                 v.ip()
                             )),
                             std::net::SocketAddr::V6(v) => rules.push_str(&format!(
-                                "        ip6 daddr {}{port_clause} accept  # {n}\n",
+                                "        ip6 daddr {} {proto_port} accept  # {n}\n",
                                 v.ip()
                             )),
                         }
@@ -292,9 +301,19 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
 }
 
 fn which(bin: &str) -> Option<std::path::PathBuf> {
-    let path_env = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_env) {
-        let p = dir.join(bin);
+    // Search PATH first, then fall back to canonical sbin locations —
+    // `nft` typically lives in /sbin (Debian/Arch) or /usr/sbin (older
+    // layouts), neither of which is in a regular user's $PATH.
+    if let Some(path_env) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_env) {
+            let p = dir.join(bin);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for fallback in ["/sbin", "/usr/sbin", "/usr/local/sbin"] {
+        let p = std::path::Path::new(fallback).join(bin);
         if p.is_file() {
             return Some(p);
         }

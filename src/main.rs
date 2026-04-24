@@ -19,12 +19,14 @@ use std::process::ExitCode;
 mod cli;
 mod config;
 mod explain;
+mod hardware;
 mod learn_core;
 mod limits;
 #[macro_use]
 mod log;
 mod mocks;
 mod net_files;
+mod preflight;
 mod presets;
 mod signing;
 mod templates;
@@ -82,11 +84,34 @@ fn run(args: cli::Cli) -> Result<i32> {
                 prof.env
                     .set
                     .insert(m.env_var.0.clone(), m.env_var.1.clone());
+                // Also expose it to the *current* process env. Linux child
+                // setup (bind-mount of /etc/resolv.conf, /etc/hosts) runs
+                // pre-exec and reads this via std::env::var before the
+                // new envp is installed by execve.
+                // SAFETY: set_var on the current process is safe before any
+                // threads are spawned by the main program.
+                unsafe {
+                    std::env::set_var(&m.env_var.0, &m.env_var.1);
+                }
                 log::info(format_args!(
                     "mocks materialised at {} ({} files)",
                     m.dir.display(),
                     prof.mocks.files.len()
                 ));
+            }
+
+            // If the profile defines an overlay, auto-grant Landlock write
+            // on both the mount point (so VFS opens are approved) and the
+            // upperdir (so overlayfs's kernel-side redirect path is covered).
+            if let (Some(lower), Some(upper)) =
+                (prof.overlay.lower.clone(), prof.overlay.upper.clone())
+            {
+                let mount_at = prof.overlay.mount.clone().unwrap_or(lower);
+                for p in [mount_at, upper] {
+                    if !prof.filesystem.read_write.iter().any(|x| x == &p) {
+                        prof.filesystem.read_write.push(p);
+                    }
+                }
             }
 
             // Materialise [workspace]: create dir, add to rw, expose via env,
@@ -228,6 +253,15 @@ fn run(args: cli::Cli) -> Result<i32> {
             let rp = config::finalize(config::load(&right)?, &ctx)?;
             print!("{}", explain::diff(&lp, &rp));
             Ok(0)
+        }
+        cli::Command::Doctor => {
+            let f = preflight::run_all();
+            print!("{}", preflight::render(&f));
+            if preflight::has_problems(&f) {
+                Ok(1)
+            } else {
+                Ok(0)
+            }
         }
         cli::Command::Explain { profile } => {
             let ctx = config::ExpandContext::detect(None)?;

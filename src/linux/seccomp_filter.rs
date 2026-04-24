@@ -44,6 +44,50 @@ pub fn install(_profile: &Profile) -> Result<()> {
         libc::SYS_swapoff,
         libc::SYS_add_key,
         libc::SYS_request_key,
+        // Hardlink / symlink creation is a classic sandbox-escape primitive:
+        // with write access to any path + read access to system paths, an
+        // attacker can pull a sensitive file into their writable dir by
+        // linkat(), sidestepping Landlock's path-based rules. Blocking link
+        // creation is a cheap, broad mitigation.
+        libc::SYS_link,
+        libc::SYS_linkat,
+        libc::SYS_symlink,
+        libc::SYS_symlinkat,
+        // Filesystem-by-handle syscalls that let the caller reopen a file
+        // by a handle obtained in another mount namespace — classic
+        // mount-ns-escape technique. Deny regardless.
+        libc::SYS_name_to_handle_at,
+        libc::SYS_open_by_handle_at,
+        // io_uring: large, fast-evolving attack surface. Recent CVEs have
+        // repeatedly found privilege escalations in this subsystem. Deny
+        // unless you need it (and if you do, patch this list).
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+        // userfaultfd: used in kernel-exploit primitives to stall on page
+        // faults. Almost no legit sandboxed-app use.
+        libc::SYS_userfaultfd,
+        // Time manipulation — prevent the sandbox from smearing the clock.
+        libc::SYS_settimeofday,
+        libc::SYS_adjtimex,
+        libc::SYS_clock_adjtime,
+        libc::SYS_clock_settime,
+        // Process-mode & comparison primitives often used in exploit chains.
+        libc::SYS_personality,
+        libc::SYS_kcmp,
+        libc::SYS_vhangup,
+        libc::SYS_quotactl,
+        // fanotify — filesystem event capture (can see metadata across mount ns).
+        libc::SYS_fanotify_init,
+        libc::SYS_fanotify_mark,
+        // Deprecated but still present on x86_64 kernels, frequently exploited.
+        libc::SYS_remap_file_pages,
+        // NUMA / memory movement: rarely needed, sometimes abused in races.
+        libc::SYS_move_pages,
+        libc::SYS_migrate_pages,
+        libc::SYS_mbind,
+        libc::SYS_set_mempolicy,
+        libc::SYS_get_mempolicy,
     ];
 
     #[cfg(target_arch = "x86_64")]

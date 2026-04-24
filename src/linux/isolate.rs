@@ -108,6 +108,15 @@ fn child_main(
     // Runs inside our mount namespace so it doesn't affect the host.
     bind_overlay_netfiles(profile).context("bind-mounting dns/hosts overlays")?;
 
+    // Path rewire (bind-mount `to` over `from`).
+    for r in &profile.filesystem.rewire {
+        bind_over(std::path::Path::new(&r.to), std::path::Path::new(&r.from))
+            .with_context(|| format!("rewire {} → {}", r.from, r.to))?;
+    }
+
+    // Hide paths: bind-mount an empty tmpfs (dir) or /dev/null (file).
+    hide_paths(&profile.filesystem.hide).context("applying hide paths")?;
+
     // True copy-on-write overlayfs, if the profile asks for it.
     apply_overlayfs(profile).context("setting up overlayfs")?;
 
@@ -127,6 +136,12 @@ fn child_main(
     // seccomp filter below (otherwise sudoable binaries could try to
     // widen; here they simply can't).
     no_new_privs().context("prctl PR_SET_NO_NEW_PRIVS")?;
+
+    // Extra prctl hardening:
+    //   - PR_SET_DUMPABLE=0 : no core dumps, and also prevents ptrace from
+    //     non-root attachers. Limits information leakage on crash.
+    //   - PR_SET_KEEPCAPS=0 : don't preserve capabilities across setuid.
+    harden_prctl().context("prctl hardening")?;
 
     // Apply Landlock filesystem restrictions.
     lock.apply().context("landlock restrict_self")?;
@@ -185,6 +200,29 @@ fn no_new_privs() -> Result<()> {
     Ok(())
 }
 
+fn harden_prctl() -> Result<()> {
+    // PR_SET_DUMPABLE = 0 : disable core dumps, block ptrace-from-non-root,
+    // and make the process non-ptrace-attachable by peers in the same
+    // user namespace.
+    // SAFETY: prctl with plain ints.
+    let rc = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error()).context("PR_SET_DUMPABLE");
+    }
+    // PR_SET_KEEPCAPS = 0 : do not preserve permitted capabilities across
+    // a setuid() call (we're not planning to setuid, but belts-and-braces).
+    // SAFETY: prctl with plain ints.
+    let rc = unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 0, 0, 0, 0) };
+    if rc != 0 {
+        // Non-fatal: rare to hit, doesn't weaken the sandbox materially.
+        eprintln!(
+            "sandkasten ⚠ PR_SET_KEEPCAPS failed ({}) — continuing",
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(())
+}
+
 /// Bind-mount synth DNS and hosts files over `/etc/resolv.conf` and
 /// `/etc/hosts`, respectively. Reads content from our mock tempdir (which
 /// the main-thread materialiser wrote just before fork) via the
@@ -216,7 +254,13 @@ fn bind_overlay_netfiles(profile: &crate::config::Profile) -> Result<()> {
 
 fn bind_over(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     use nix::mount::{mount, MsFlags};
-    // Read-only bind: mount(src, dst, MS_BIND), then remount with MS_REMOUNT|MS_RDONLY.
+    // Bind-mount src over dst inside our mount namespace. We don't attempt a
+    // follow-up MS_REMOUNT|MS_RDONLY — in user-namespaced mounts the
+    // kernel often rejects that remount even with CAP_SYS_ADMIN (the
+    // mount inherits "locked" rw from the base mount). Read-only is not
+    // strictly required for our use case: any write the sandbox makes to
+    // `dst` lands in the source file in our private mocks tempdir, which
+    // is discarded on exit — not in the host's real /etc/resolv.conf.
     mount(
         Some(src),
         dst,
@@ -225,14 +269,6 @@ fn bind_over(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
         Option::<&str>::None,
     )
     .with_context(|| format!("bind-mount {} -> {}", src.display(), dst.display()))?;
-    mount(
-        Option::<&std::path::Path>::None,
-        dst,
-        Option::<&str>::None,
-        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
-        Option::<&str>::None,
-    )
-    .with_context(|| format!("remount-ro {}", dst.display()))?;
     Ok(())
 }
 
@@ -283,6 +319,45 @@ fn apply_overlayfs(profile: &crate::config::Profile) -> Result<()> {
         Some(opts.as_str()),
     )
     .with_context(|| format!("overlayfs mount at {mount_at} ({opts})"))?;
+    Ok(())
+}
+
+/// For each path in `paths`, replace the sandbox's view with an empty
+/// entity: an empty tmpfs for directories, `/dev/null` for files. Callers
+/// that stat these paths see them existing but devoid of useful content.
+fn hide_paths(paths: &[String]) -> Result<()> {
+    use nix::mount::{mount, MsFlags};
+    for p in paths {
+        let dst = std::path::Path::new(p);
+        let meta = match std::fs::metadata(dst) {
+            Ok(m) => m,
+            Err(_) => continue, // already absent — nothing to hide
+        };
+        if meta.is_dir() {
+            // tmpfs mount, size=0. Read-only remount is rejected under userns
+            // but the mount is per-sandbox and discarded on exit.
+            mount(
+                Some("tmpfs"),
+                dst,
+                Some("tmpfs"),
+                MsFlags::empty(),
+                Some("size=0,mode=0555"),
+            )
+            .with_context(|| format!("hide (tmpfs) at {}", dst.display()))?;
+        } else {
+            // For files, bind /dev/null over them. Read → empty; stat →
+            // looks like a character device (0 bytes). Many apps treat the
+            // file as "empty config" rather than crashing.
+            mount(
+                Some("/dev/null"),
+                dst,
+                Option::<&str>::None,
+                MsFlags::MS_BIND,
+                Option::<&str>::None,
+            )
+            .with_context(|| format!("hide (/dev/null bind) at {}", dst.display()))?;
+        }
+    }
     Ok(())
 }
 

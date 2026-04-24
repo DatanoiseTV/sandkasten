@@ -85,6 +85,10 @@ pub enum Command {
         profile: String,
     },
 
+    /// Pre-flight environment check: kernel features, supporting tools,
+    /// and OS-specific install commands for anything missing.
+    Doctor,
+
     /// Write a starter profile to disk.
     Init {
         /// Template to start from.

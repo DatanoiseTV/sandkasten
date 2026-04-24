@@ -31,6 +31,11 @@ pub struct Profile {
     #[serde(default)]
     pub mocks: Mocks,
 
+    /// Hardware access: USB, serial, PTY, audio, GPU. Auto-expands into the
+    /// right FS paths and Mach services at profile-load time.
+    #[serde(default)]
+    pub hardware: Hardware,
+
     /// Simple cross-platform workspace — a persistent directory the sandbox
     /// sees as read+write, can `chdir` into on start, and that the user may
     /// pre-populate or inspect afterwards.
@@ -55,6 +60,27 @@ pub struct Workspace {
     /// workspace path. `--cwd` on the CLI still wins.
     #[serde(default)]
     pub chdir: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hardware {
+    /// libusb / raw USB: reads+writes on `/dev/bus/usb/*` (Linux) or IOKit +
+    /// USB Mach services (macOS).
+    #[serde(default)]
+    pub usb: bool,
+    /// Serial ports (`/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/tty.usbserial*`, etc.).
+    #[serde(default)]
+    pub serial: bool,
+    /// Audio: ALSA/PulseAudio on Linux, CoreAudio Mach services on macOS.
+    #[serde(default)]
+    pub audio: bool,
+    /// GPU / DRM / Metal. Still requires platform-specific sandbox settings.
+    #[serde(default)]
+    pub gpu: bool,
+    /// Camera / webcam / V4L2.
+    #[serde(default)]
+    pub camera: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -121,6 +147,29 @@ pub struct Filesystem {
     /// `chown`, `xattr`, `ioctl`, `exec`, `all`.
     #[serde(default)]
     pub rules: Vec<FileRule>,
+
+    /// Rewire paths so that inside the sandbox, `from` actually points to
+    /// `to`. Linux: bind-mount `to` over `from` inside the mount namespace.
+    /// macOS: not supported without an interposer — the rewire list is
+    /// ignored with a warning.
+    #[serde(default)]
+    pub rewire: Vec<Rewire>,
+
+    /// Hide paths so callers see them as empty / non-existent rather than
+    /// getting EPERM on access. Useful when a target app probes for config
+    /// files and crashes on "permission denied" but handles "not found".
+    /// Linux: bind-mounts an empty tmpfs over directories and `/dev/null`
+    /// over files. macOS: emits SBPL denies (still returns EPERM) and
+    /// warns.
+    #[serde(default)]
+    pub hide: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rewire {
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -421,6 +470,13 @@ impl Profile {
         for r in &mut self.filesystem.rules {
             r.path = ctx.expand(&r.path)?;
         }
+        for r in &mut self.filesystem.rewire {
+            r.from = ctx.expand(&r.from)?;
+            r.to = ctx.expand(&r.to)?;
+        }
+        for p in &mut self.filesystem.hide {
+            *p = ctx.expand(p)?;
+        }
         if let Some(p) = self.workspace.path.as_deref() {
             self.workspace.path = Some(ctx.expand(p)?);
         }
@@ -505,6 +561,8 @@ impl Profile {
         // Child rules go AFTER parent rules so that their last-match-wins
         // behaviour in SBPL still applies correctly.
         out.filesystem.rules.extend(self.filesystem.rules);
+        out.filesystem.rewire.extend(self.filesystem.rewire);
+        extend(&mut out.filesystem.hide, self.filesystem.hide);
 
         // Network
         out.network.allow_localhost |= self.network.allow_localhost;
@@ -562,6 +620,13 @@ impl Profile {
         for (k, v) in self.mocks.files {
             out.mocks.files.insert(k, v);
         }
+
+        // Hardware flags: additive.
+        out.hardware.usb    |= self.hardware.usb;
+        out.hardware.serial |= self.hardware.serial;
+        out.hardware.audio  |= self.hardware.audio;
+        out.hardware.gpu    |= self.hardware.gpu;
+        out.hardware.camera |= self.hardware.camera;
 
         // Workspace & overlay: child scalars win when set.
         if self.workspace.path.is_some() {
@@ -843,10 +908,11 @@ fn merge_parents(mut p: Profile) -> Result<Profile> {
 }
 
 /// Finalize a profile: expand path variables using `ctx`, expand named
-/// protocol/service presets, then validate.
+/// protocol/service presets and hardware-access flags, then validate.
 pub fn finalize(mut p: Profile, ctx: &ExpandContext) -> Result<Profile> {
     p.expand_paths(ctx)?;
     crate::presets::expand(&mut p);
+    crate::hardware::expand(&mut p);
     p.validate()?;
     Ok(p)
 }
