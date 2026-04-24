@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.3.2 — 2026-04-24
+
+Follow-up fixes surfaced by dogfooding the workspace/overlay/snap
+features on a fresh Debian trixie install:
+
+- `sandkasten snap save/load/list <profile> ...` now accepts a TOML
+  file path as the profile argument — the same shape that
+  `sandkasten run` accepts. When a file path is given the snapshot
+  key is derived from the profile's `name = "..."` field (falling
+  back to the file stem), instead of failing with
+  "name must be [a-zA-Z0-9_-]+, got '/tmp/foo.toml'".
+- `snap load` was using second-precision timestamps for the `upper.bak-*`
+  directory, so two consecutive `snap load` calls in the same second
+  collided on the rename with "Directory not empty" (os error 39).
+  Bumped to nanosecond + PID suffix so back-to-back loads work.
+- Overlay profiles now auto-add `overlay.upper` and `overlay.mount` to
+  `filesystem.read_write` during `finalize()`. Without that, every
+  write into the merged mount point was path-denied by Landlock even
+  though overlayfs internally routed the write to an upper dir that
+  was nominally inside a writable tree. The CHANGELOG for v0.2.0
+  claimed this auto-add existed but it had never actually been
+  wired up; the finalize step now does it.
+
+### Dogfood milestone
+
+Sandkasten can now build itself under its own `dev` sandbox on Linux:
+
+    $ sandkasten run dev -- cargo build --release
+    …
+    Finished `release` profile [optimized] target(s) in 41.49s
+
+No profile tweaks needed — `dev` with `${CWD}` on `read_write`, HTTPS
+outbound for crate downloads, and the userns/Landlock/seccomp base is
+enough for a full release build.
+
 ## v0.3.1 — 2026-04-24
 
 Parity pass: the Linux backend now reaches the same "works out of the
