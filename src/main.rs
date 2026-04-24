@@ -330,6 +330,16 @@ fn run(args: cli::Cli) -> Result<i32> {
                 }
             }
         }
+        cli::Command::Info => {
+            print_info();
+            Ok(0)
+        }
+        cli::Command::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = cli::Cli::command();
+            clap_complete::generate(shell, &mut cmd, "sandkasten", &mut std::io::stdout());
+            Ok(0)
+        }
         cli::Command::Doctor => {
             let f = preflight::run_all();
             print!("{}", preflight::render(&f));
@@ -479,6 +489,43 @@ fn parse_duration_seconds(s: &str) -> Result<u64> {
         .map_err(|_| anyhow!("invalid duration {s:?} (expected e.g. 30s, 5m, 2h)"))?;
     n.checked_mul(mult)
         .ok_or_else(|| anyhow!("duration overflow: {s}"))
+}
+
+fn print_info() {
+    println!("sandkasten {}", env!("CARGO_PKG_VERSION"));
+    println!("  platform: {}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let conf = dirs::config_dir().map(|p| p.join("sandkasten"));
+    if let Some(c) = &conf {
+        println!("  config dir:    {}", c.display());
+        println!("  profiles dir:  {}", c.join("profiles").display());
+        println!("  trusted keys:  {}", c.join("trusted_keys").display());
+        println!("  snapshots dir: {}", c.join("snapshots").display());
+    }
+    println!();
+    println!("built-in templates:");
+    for (name, desc) in templates::LIST {
+        println!("  {name:<16}  {desc}");
+    }
+    if let Some(c) = conf {
+        let profdir = c.join("profiles");
+        if let Ok(rd) = std::fs::read_dir(&profdir) {
+            let count = rd
+                .flatten()
+                .filter(|e| {
+                    e.path().extension().and_then(|s| s.to_str()) == Some("toml")
+                })
+                .count();
+            println!("\n  user profiles installed: {count}");
+        }
+        let trusted = c.join("trusted_keys");
+        if let Ok(rd) = std::fs::read_dir(&trusted) {
+            let count = rd
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("pub"))
+                .count();
+            println!("  trusted signing keys:    {count}");
+        }
+    }
 }
 
 /// 64-bit FNV-1a hash. Cheap, no-deps, stable. We use it for the policy-hash

@@ -119,6 +119,17 @@ pub enum Command {
     /// and OS-specific install commands for anything missing.
     Doctor,
 
+    /// Print summary info about this sandkasten install — version,
+    /// config dirs, trusted keys, available templates.
+    Info,
+
+    /// Print shell-completion script to stdout.
+    /// Usage: `sandkasten completions bash > /etc/bash_completion.d/sandkasten`
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Save or restore the writable state of a profile's overlay upper
     /// layer. Useful for "time-travel" over a sandbox that uses [overlay].
     #[command(subcommand)]
