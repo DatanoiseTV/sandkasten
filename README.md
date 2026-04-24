@@ -856,20 +856,70 @@ Built-in templates ship inside the signed binary — they skip `--verify`.
 
 ### Threat model — what it is **not** for
 
+sandkasten is kernel-enforced process isolation built on primitives the
+OS already ships. It is not a virtual machine, a hypervisor, or a
+hardware isolation layer. Concretely out-of-scope:
+
 - **Kernel exploits.** Anything that breaks out of MACF / Landlock /
-  seccomp bypasses us too.
-- **Root escalation.** If the target finds a way to root, the sandbox
-  ends. `PR_SET_NO_NEW_PRIVS` rules out setuid escalation; kernel
-  vulns are not in scope.
-- **Side-channel leakage.** Timing attacks, cache-based covert
-  channels, Meltdown/Spectre class bugs.
+  seccomp bypasses us too. If an attacker reaches a kernel bug through
+  an allowed syscall surface, the sandbox ends at that point. Enabling
+  `process.no_w_x` + `process.mitigate_spectre` + `block_privilege_elevation`
+  shrinks the reachable surface but doesn't close it.
+- **Root escalation.** If the target finds a way to host-root, the
+  sandbox ends. `PR_SET_NO_NEW_PRIVS` + capability bounding-set drop
+  + seccomp block of setuid family (via `block_setid_syscalls`) rule
+  out the usual suspects; novel kernel vulns are not in scope.
+- **Side-channel leakage.** Timing / power / cache-based covert
+  channels, transient-execution attacks (Spectre family, Meltdown,
+  L1TF, MDS, Downfall, GhostRace). `process.mitigate_spectre` turns on
+  the kernel's process-local mitigations for v2 + SSBD; everything
+  else is a host-level OS or firmware concern.
+- **Rowhammer / memory-fault injection.** Hardware-level bit flips
+  are orthogonal to any process sandbox. Mitigation is a BIOS / memory-
+  controller / DIMM problem.
+- **Covert channels over allowed outbound.** A profile that grants
+  outbound HTTPS permits DNS tunnelling, OCSP-stuffing, TLS-SNI
+  signalling, and every other "legitimate connection with side data"
+  trick. The sandbox enforces destinations and ports, not semantic
+  intent. Use `[network.proxy]` + an L7-filtering mitmproxy or
+  Squid if you need HTTP-method / URL / header filtering.
+- **Resource-exhaustion attacks against the host.** `[limits]` caps
+  CPU-seconds, memory, file-size, open files, processes, stack, and
+  wall-clock for the sandboxed process tree — but a profile that
+  doesn't set them defaults to OS-wide RLIMIT. Fork bombs, disk-fill
+  via `/tmp`, and ptrace-storms can still DOS the host if the profile
+  doesn't set `limits.processes` / `limits.file_size_mb` / similar.
+- **TOCTOU windows on path-based rules.** macOS SBPL and Linux
+  Landlock both resolve paths at access time — an attacker who wins
+  a race between "sandkasten built the ruleset" and "target opens the
+  path" can exploit symlink swaps for files outside the sandbox's
+  view. We mitigate by opening Landlock `PathFd`s before fork and
+  by blocking hardlink/symlink creation via seccomp; we don't eliminate
+  the class.
+- **Landlock "deny-inside-allow" enforcement.** Landlock is
+  allow-list only: a `deny` path that sits inside an enclosing
+  `read` / `read_write` subtree can't be enforced on Linux. macOS
+  SBPL supports true deny-overrides. `sandkasten run` warns at
+  `-v` when a deny is unenforceable.
 - **Airtight hardware-identity hiding.** `[spoof]` replaces user-space
   views of `/proc`, `/sys`, `/etc/*` — it does not patch the `CPUID`
   instruction, `uname(2)` syscall fields the kernel fills,
   `_SC_NPROCESSORS_ONLN` (which reads `/sys/devices/system/cpu/online`
-  unless Go/Rust/num_cpus honours affinity, which most do), or
-  userland that reads `/dev/kmsg`. It's a faithful view for most
+  unless `num_cpus`-style libraries honour affinity, which most do),
+  or userland that reads `/dev/kmsg`. It's a faithful view for most
   tools; it's not a VM.
+- **Compromise of the build chain that produced the sandkasten binary
+  itself.** Supply-chain hardening (SBOM, SLSA provenance, signed
+  releases) covers the tarballs we publish; users who build from
+  source inherit the integrity of their toolchain and crate cache.
+  `cosign verify-blob` against the public key in `SIGNING.md`
+  proves authenticity of a downloaded release artifact.
+- **Correctness of the GUI / Web UI profile editors.** The structured
+  editors in `swift-ui/` and `src/ui/` emit TOML that's then parsed
+  by the normal config loader — they can emit policies that don't
+  match user intent if there's a UI bug. Always confirm with
+  `sandkasten render` + `sandkasten explain` before trusting a
+  profile generated interactively.
 
 ### Anti-breakout measures
 
