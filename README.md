@@ -42,6 +42,10 @@ Unprivileged — sandkasten itself never requires root.
 - **Honest limits.** Failure modes and platform asymmetries are documented
   inline in the generated policy and in this README. See *Limits*, below.
 
+> 🚀 **New here?** Start with the [Quick Start](docs/QUICKSTART.md) —
+> installs, first sandboxed command, templates at a glance, writing a
+> profile, hardening knobs, CI/CD. This README is the full reference.
+
 ## Install
 
 ### Homebrew (macOS + Linuxbrew)
