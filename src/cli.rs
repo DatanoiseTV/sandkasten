@@ -39,6 +39,29 @@ pub struct Cli {
     /// Suppress all non-error output (overrides `-v`).
     #[arg(long, short = 'q', global = true)]
     pub quiet: bool,
+
+    /// Emit machine-readable structured events alongside (or instead
+    /// of) the human-readable log. Format is newline-delimited JSON:
+    /// one event per line, each line a self-contained JSON object
+    /// with at minimum `{"event":"...","ts":"<ISO-8601>"}`. Useful
+    /// for SIEM / auditd ingest.
+    ///
+    /// Currently emits `run_start` and `run_end` for each sandbox
+    /// invocation (`run`, `wrap`, `shell`, `sshd`); future work
+    /// will add `denial` events from kernel-log capture.
+    ///
+    /// Defaults to `none` (no structured output). `json` writes to
+    /// the path given by `--events-file`, or to stderr alongside
+    /// the regular log if no file is given.
+    #[arg(long, value_name = "FORMAT", value_parser = ["none", "json"], default_value = "none", global = true)]
+    pub events: String,
+
+    /// File to write structured events to (only with `--events=json`).
+    /// `-` writes to stdout, omitting writes to stderr (default for
+    /// `--events=json` without this flag). Append-mode; rotated by
+    /// the user / external tooling.
+    #[arg(long, value_name = "PATH", global = true)]
+    pub events_file: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]

@@ -21,6 +21,7 @@ mod learn_core;
 mod limits;
 #[macro_use]
 mod log;
+mod events;
 mod mocks;
 mod net_files;
 mod preflight;
@@ -40,6 +41,10 @@ mod linux;
 fn main() -> ExitCode {
     let args = cli::Cli::parse();
     log::set(log::from_flags(args.verbose, args.quiet));
+    if let Err(e) = events::init(&args.events, args.events_file.as_deref()) {
+        eprintln!("sandkasten: {e:#}");
+        return ExitCode::from(2);
+    }
     match run(args) {
         Ok(code) =>
         {
@@ -150,7 +155,28 @@ fn run(args: cli::Cli) -> Result<i32> {
                 argv.first().map_or("?", String::as_str),
             ));
             log::print_summary(&prof);
+
+            // Structured run_start event for SIEM-style consumers
+            // (no-op when --events=none, which is the default). The
+            // policy hash is the same fingerprint that `render` emits
+            // — handy for "did this exact policy run?" auditing.
+            let policy_hash = render_policy(&prof)
+                .ok()
+                .map(|r| format!("{:016x}", fnv1a(r.as_bytes())));
+            events::run_start(
+                prof.name.as_deref().unwrap_or("(unnamed)"),
+                argv.first().map_or("", String::as_str),
+                &argv,
+                policy_hash.as_deref(),
+            );
+            let started = std::time::Instant::now();
             let rc = run_sandboxed(&prof, effective_cwd.as_deref(), &argv);
+            let wall_ms = started.elapsed().as_millis();
+            // Always emit run_end so a downstream pipeline can pair
+            // start/end records by pid even on errors.
+            let exit_code = rc.as_ref().copied().unwrap_or(127);
+            events::run_end(exit_code, wall_ms);
+
             if let Some(m) = mock_handle {
                 let _ = std::fs::remove_dir_all(&m.dir);
             }
@@ -228,6 +254,8 @@ fn run(args: cli::Cli) -> Result<i32> {
                 },
                 verbose: args.verbose,
                 quiet: args.quiet,
+                events: args.events,
+                events_file: args.events_file,
             })
         }
         cli::Command::Shell {
