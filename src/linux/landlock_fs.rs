@@ -18,17 +18,13 @@ pub struct Prepared {
 }
 
 impl Prepared {
-    pub fn from(p: &Profile) -> Result<Self> {
-        Self::for_target(p, None)
-    }
-
-    /// Like [`Self::from`], but when `target` is provided, the parent
-    /// directory of the target binary is implicitly added to the
-    /// Landlock allow-list with read + execute. This mirrors the macOS
-    /// side: sandkasten's own `execve()` of `argv[0]` must always
-    /// succeed regardless of how sparse the profile is, otherwise a
-    /// minimal template ("strict") bricks itself before it can reach
-    /// the sandboxed program's `main()`.
+    /// Build the Landlock ruleset for the given profile. When `target`
+    /// is provided, the parent directory of the target binary is
+    /// implicitly added to the allow-list with read + execute — this
+    /// mirrors the macOS side: sandkasten's own `execve()` of `argv[0]`
+    /// must always succeed regardless of how sparse the profile is,
+    /// otherwise a minimal template ("strict") bricks itself before it
+    /// can reach the sandboxed program's `main()`.
     pub fn for_target(p: &Profile, target: Option<&str>) -> Result<Self> {
         let abi = ABI::V3;
         let access_all = AccessFs::from_all(abi);
@@ -127,7 +123,6 @@ fn prune(fs: &crate::config::Filesystem) -> (Vec<String>, Vec<String>) {
         d.starts_with(a) && a != d
     };
     let covered_by_deny = |p: &str| fs.deny.iter().any(|d| is_ancestor(d, p) || p == d);
-    let has_deny_inside = |p: &str| fs.deny.iter().any(|d| is_ancestor(p, d));
 
     let mut reads = Vec::new();
     let mut writes = Vec::new();
