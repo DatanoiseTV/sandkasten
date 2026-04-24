@@ -189,8 +189,13 @@ pub enum Command {
     },
 
     /// Run the target with full permissions in trace mode, then interactively
-    /// generate a tight profile from what the app actually did. Works on
-    /// macOS (sandbox-trace) and Linux (strace fallback).
+    /// generate a tight profile from what the app actually did. Fully
+    /// functional on Linux (strace). macOS 14+ silently disables the
+    /// Seatbelt `(trace ...)` directive unless the caller has the
+    /// `com.apple.security.sandbox.trace` entitlement (sandbox-exec does
+    /// not); this command will emit a clear error rather than produce an
+    /// empty profile. Generated TOML is cross-platform — learn on Linux
+    /// and run on either.
     Learn {
         /// Base template the generated profile will extend.
         #[arg(long, default_value = "strict")]

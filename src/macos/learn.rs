@@ -40,6 +40,25 @@ pub fn run(argv: &[String], cwd: Option<&Path>, opts: Options) -> Result<i32> {
     let exit = super::run_with_sbpl(&policy, argv, cwd, envp, &crate::config::Limits::default())?;
     eprintln!("\nsandkasten: target exited with code {exit}");
 
+    // Modern macOS (14+) silently ignores the Seatbelt `(trace ...)`
+    // directive. The sandbox kernel extension still evaluates the
+    // policy but no trace file is written unless the caller has the
+    // `com.apple.security.sandbox.trace` entitlement — which `sandbox-
+    // exec` does not have. Give the user a clear, actionable error
+    // instead of a silently-empty profile.
+    if !trace_path.exists() {
+        return Err(anyhow!(
+            "macOS sandbox `(trace ...)` directive produced no output — this \
+             is a platform restriction on macOS 14+ where the trace facility \
+             requires the `com.apple.security.sandbox.trace` entitlement that \
+             `sandbox-exec` lacks. The Linux `learn` backend (strace) still \
+             works. If you need to author a profile on macOS: run the target \
+             with `sandkasten run self -vvv -- <cmd>` and inspect the `log \
+             show --predicate ...` output, or run `learn` on a Linux box (the \
+             generated TOML is cross-platform) and tune on macOS by hand."
+        ));
+    }
+
     let ops = parse_trace(&trace_path)
         .with_context(|| format!("parsing trace {}", trace_path.display()))?;
     let _ = std::fs::remove_file(&trace_path);
