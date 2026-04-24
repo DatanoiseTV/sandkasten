@@ -27,10 +27,18 @@ Unprivileged — sandkasten itself never requires root.
 - **Default deny.** Filesystem, network, Mach services, sysctl, IOKit, IPC —
   all off unless the profile opts in. Templates (`strict`, `minimal-cli`,
   `self`, `dev`, `browser`, `electron`, `network-client`) provide sane starts.
-- **Interactive learning.** `sandkasten learn — <cmd>` runs the target with
-  full permissions while capturing every operation it performs, applies
-  heuristics (subtree collapsing, sensitive-path flagging, preset detection),
-  and interactively proposes a tight profile.
+- **Privilege-elevation guardrails.** `process.block_privilege_elevation = true`
+  denies exec of `sudo` / `su` / `doas` / `pkexec` / `runuser` / `visudo`
+  across macOS and Linux (incl. Homebrew, Linuxbrew, Snap, and
+  `/usr/local/bin/...` installs). `process.block_setid_syscalls = true`
+  seccomp-denies every setuid/setgid-family syscall on Linux so shellcode
+  that skips the named binary can't gain creds either.
+- **Interactive OR scripted learning.** `sandkasten learn -- <cmd>` runs the
+  target with full permissions while capturing every operation it performs,
+  applies heuristics (subtree collapsing, sensitive-path flagging, preset
+  detection), and interactively proposes a tight profile. Use `--yes` for
+  a non-interactive mode that accepts every bucket (except sensitive paths,
+  which always stay default-deny).
 - **Honest limits.** Failure modes and platform asymmetries are documented
   inline in the generated policy and in this README. See *Limits*, below.
 
@@ -120,6 +128,32 @@ sandkasten run ./untrusted.toml -- npm install
 `~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, shell history, TCC database are
 all inherited-denied from the `self` template. The package script can't
 reach them even if it tries — sandbox returns EPERM.
+
+### Block re-exec through sudo / su (defense against cached creds)
+
+```toml
+# harder.toml — most hosts have NOPASSWD: ALL sudoers entries for the
+# user account at some point. A compromised sandboxed tool could call
+# `sudo sh -c 'curl ... | sh'` and escalate to host-root before the
+# user notices. This flag denies exec of every named elevation binary
+# and, on Linux, also seccomp-denies the setuid-family syscalls so
+# shellcode that skips the binary still can't flip creds.
+extends = "dev"
+[process]
+block_privilege_elevation = true   # implies block_setid_syscalls
+```
+
+```sh
+sandkasten run harder.toml -- ./untrusted-tool
+# Inside: `sudo whoami` → sandkasten: execve failed: /usr/bin/sudo errno=1
+# `/usr/bin/python3 -c 'import os; os.setuid(0)'` → OSError: EPERM
+```
+
+Works symmetrically on macOS (Seatbelt `(deny process-exec ...)`) and
+Linux (Landlock exclusion + seccomp). The binary list covers standard
+`/usr/bin/`, Homebrew on Apple Silicon, Linuxbrew, Snap, and
+`/usr/local/bin/...` for locally compiled installs — not just the
+macOS paths.
 
 ### Sandbox a Chromium-family browser for a one-off session
 
@@ -797,3 +831,8 @@ Dual-licensed under **MIT** or **Apache-2.0** at your option.
       `DYLD_INSERT_LIBRARIES`
 - [ ] Live policy reload (SIGHUP → re-apply; sandbox_init only narrows)
 - [x] Homebrew tap published at `DatanoiseTV/sandkasten`
+- [x] `process.block_privilege_elevation` + `process.block_setid_syscalls`
+      (sudo/su/doas/pkexec exec deny + seccomp setid family deny)
+- [x] `sandkasten learn --yes` non-interactive capture for scripts / CI
+- [x] Weekly Dependabot-grouped dependency updates (cargo + swift +
+      github-actions)
