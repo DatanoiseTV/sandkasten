@@ -49,11 +49,34 @@ Unprivileged — sandkasten itself never requires root.
 ```sh
 brew tap DatanoiseTV/sandkasten
 brew install sandkasten
-# or track main:
-brew install --HEAD sandkasten
 ```
 
-Shell completions are installed automatically for bash/zsh/fish.
+The formula installs from prebuilt per-arch tarballs from the GitHub
+release — ~2 s wall-clock, no Rust toolchain required. Shell completions
+for bash/zsh/fish are installed automatically on the native triples
+(arm64-macos, x86_64-linux).
+
+### Direct download
+
+Each release ships tarballs for every `{aarch64,x86_64}-{apple-darwin,
+unknown-linux-gnu}` combo plus a versionless alias so generic URLs
+work across version bumps. Grab the one for your platform from
+<https://github.com/DatanoiseTV/sandkasten/releases/latest> or one-liner it:
+
+```sh
+# Linux x86_64 — latest release, auto-resolved server-side, no version pin:
+curl -sSL https://github.com/DatanoiseTV/sandkasten/releases/latest/download/sandkasten-x86_64-unknown-linux-gnu.tar.gz \
+  | tar -xz && sudo install sandkasten-*/sandkasten /usr/local/bin/
+
+# macOS Apple Silicon:
+curl -sSL https://github.com/DatanoiseTV/sandkasten/releases/latest/download/sandkasten-aarch64-apple-darwin.tar.gz \
+  | tar -xz && sudo install sandkasten-*/sandkasten /usr/local/bin/
+```
+
+Swap the triple for `aarch64-unknown-linux-gnu` (Linux arm64) or
+`x86_64-apple-darwin` (Intel Macs). Pin a specific release by
+replacing `latest/download/` with `download/<tag>/` and adding the
+`<tag>-` prefix to the filename.
 
 ### From source
 
@@ -63,9 +86,12 @@ cargo install --path .
 cargo build --release   # → target/release/sandkasten
 ```
 
-Runtime deps: macOS just works. Linux benefits from `nftables` (per-IP
-outbound filtering) and `strace` (Linux `learn` mode). `sandkasten doctor`
-prints distro-tailored install commands for anything missing.
+Runtime dependencies: none on either platform — the prebuilt binary
+is statically self-contained. Linux optionally *benefits* from `pasta`
+(from the `passt` package) or `slirp4netns` for external network
+connectivity under a private netns with per-IP `nftables` filtering,
+and `strace` for `sandkasten learn`. `sandkasten doctor` prints
+distro-tailored install commands for anything missing.
 
 ## 60-second tour
 
@@ -351,16 +377,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install sandkasten (prebuilt binary, ~2s)
+      - name: Install sandkasten (prebuilt binary, ~2s — tracks latest)
         run: |
-          VERSION=0.4.0
-          curl -sSL -o sk.tar.gz \
-            "https://github.com/DatanoiseTV/sandkasten/releases/download/v${VERSION}/sandkasten-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          tar -xzf sk.tar.gz
-          sudo install sandkasten-v${VERSION}-x86_64-unknown-linux-gnu/sandkasten /usr/local/bin/
-          # Install slirp4netns so outbound network + per-IP nftables
-          # filtering work inside the sandbox (instead of falling back
-          # to host netns).
+          # Versionless alias resolved server-side → this step stays
+          # green across version bumps with no CI edits. Pin a
+          # specific release by swapping `latest/download/` for
+          # `download/v0.4.0/` and prefixing the filename with the
+          # tag, if you want reproducible runs.
+          curl -sSL \
+            https://github.com/DatanoiseTV/sandkasten/releases/latest/download/sandkasten-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz
+          sudo install sandkasten-*/sandkasten /usr/local/bin/
+          # slirp4netns → real outbound + per-IP nftables filtering
+          # inside the sandbox. Without it, network-client falls back
+          # to host netns (still works, just loses per-IP enforcement).
           sudo apt-get update -qq && sudo apt-get install -y -qq slirp4netns
 
       - name: `npm install` under a hardened sandbox
@@ -413,7 +443,9 @@ sandboxed-tests:
   image: ubuntu:22.04
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl slirp4netns ca-certificates
-    - curl -sSL https://github.com/DatanoiseTV/sandkasten/releases/download/v0.4.0/sandkasten-v0.4.0-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+    # Versionless alias auto-resolved to the current release — no
+    # pipeline bumps needed when sandkasten updates.
+    - curl -sSL https://github.com/DatanoiseTV/sandkasten/releases/latest/download/sandkasten-x86_64-unknown-linux-gnu.tar.gz | tar -xz
     - install sandkasten-*/sandkasten /usr/local/bin/
   script:
     - |
@@ -514,7 +546,7 @@ sandkasten run <profile> [--timeout 30s] [--verify] [-C <cwd>] -- <cmd> [args...
 sandkasten shell <profile>                 # interactive sandboxed shell, $SANDKASTEN_PROFILE set
 sandkasten sshd <profile>                  # for sshd ForceCommand — see Use cases
 sandkasten init [--template <name>] [-o <path>]
-sandkasten learn [--base <tpl>] [-o <out.toml>] [--auto-system] -- <cmd>
+sandkasten learn [--base <tpl>] [-o <out.toml>] [--auto-system] [--yes|-y] -- <cmd>
 sandkasten check <profile>                 # validate without running
 sandkasten render <profile>                # print generated policy (+ policy-hash trailer)
 sandkasten explain <profile>               # plain-English summary
@@ -718,10 +750,10 @@ files = { "config.json" = '{"api":"local"}' }
 | `self`           | **Default.** Read across `/`, read+write only `${CWD}`, hard-deny secrets |
 | `strict`         | Near-zero permissions — minimal base every dynamically-linked binary needs|
 | `minimal-cli`    | `strict` + `/usr/bin /bin /sbin /usr/local /opt` + CWD readable           |
-| `network-client` | `minimal-cli` + outbound TCP 80/443 + DNS. Read-only FS.                  |
-| `dev`            | Permissive. Read `/`, write CWD/TMP, localhost. Denies user secrets.      |
-| `browser`        | Chromium-family browsers. Pair with `--no-sandbox`.                       |
-| `electron`       | Electron apps (VS Code, Slack, Discord, Obsidian, …).                     |
+| `network-client` | `minimal-cli` + outbound TCP 80/443 + DNS + `$TMPDIR` + `/var/run/resolv.conf`. |
+| `dev`            | Permissive. Read `/`, write CWD/TMP, HTTPS/SSH/DNS + localhost. Denies user secrets. |
+| `browser`        | Chromium-family browsers (macOS + Linux). Pair with `--no-sandbox`.       |
+| `electron`       | Electron apps (VS Code, Slack, Discord, Obsidian, …). Grants write on `~/Library/Application Support` (macOS). |
 
 ### Network presets
 
@@ -868,12 +900,16 @@ Shipped honestly — nothing hidden.
 4. **Landlock is allow-list only.** A `deny` inside a broader allow
    emits a warning and is not enforced on Linux; narrow the allow
    instead.
-5. **External network connectivity is not set up automatically on
-   Linux.** A fresh netns has no interfaces beyond `lo`. For real
-   outbound traffic inside the sandbox combine sandkasten with
-   `pasta` / `slirp4netns` / rootless-podman netstack; sandkasten's
-   nftables rules then enforce per-host policy over whichever
-   connectivity exists.
+5. **Linux network plumbing.** A fresh netns has no interfaces beyond
+   `lo`, so for outbound profiles sandkasten auto-detects and uses
+   `pasta` (from the `passt` package) or `slirp4netns` to bridge the
+   private netns to the host network. `nftables` rules then enforce
+   per-IP policy inside the plumbed netns without touching the host.
+   If neither tool is installed (or `pasta` is AppArmor-confined on
+   Debian/Ubuntu, which we detect), sandkasten falls back to sharing
+   the host netns — internet still works, but per-IP filtering is
+   not kernel-enforced. `sandkasten render <profile>` names the
+   active mode explicitly.
 6. **Mock mode v1 is a content sidecar.** `[mocks.files]` materialises
    to `$SANDKASTEN_MOCKS`. Transparent path interposition (so a
    program opening `/etc/hostname` reads the mock without
@@ -939,19 +975,21 @@ Dual-licensed under **MIT** or **Apache-2.0** at your option.
 - [x] `sandkasten shell / sshd / diff / explain / doctor / snap`
 - [x] Reproducibility fingerprint in `render`
 - [x] End-to-end Linux smoke test in CI
-- [ ] Bundled `pasta` / `slirp4netns` integration for turnkey Linux
-      outbound
-- [ ] Transparent mock interposition via `LD_PRELOAD` /
-      `DYLD_INSERT_LIBRARIES`
-- [ ] Live policy reload (SIGHUP → re-apply; sandbox_init only narrows)
-- [x] Homebrew tap published at `DatanoiseTV/sandkasten`
-- [x] Anti-exploitation: unconditional TIOCSTI block (seccomp ioctl-arg
-      filter); opt-in `process.no_w_x` (PR_SET_MDWE) and
-      `process.mitigate_spectre` (PR_SET_SPECULATION_CTRL) on Linux.
-- [x] pasta + slirp4netns auto-integration on Linux for per-IP outbound
-      filtering without giving up OOB external connectivity.
+- [x] Bundled `pasta` / `slirp4netns` auto-integration for turnkey
+      Linux outbound, with per-IP nftables filtering enforced inside
+      the plumbed netns; AppArmor-aware fallback to host netns.
+- [x] Homebrew tap published at `DatanoiseTV/sandkasten`; prebuilt
+      per-arch binaries (~2 s install, no Rust build-dep).
+- [x] Always-on TIOCSTI seccomp block (ioctl-arg conditional deny).
+- [x] Opt-in `process.no_w_x` (PR_SET_MDWE memory W^X) and
+      `process.mitigate_spectre` (PR_SET_SPECULATION_CTRL for
+      Spectre v2 + SSBD) on Linux.
 - [x] `process.block_privilege_elevation` + `process.block_setid_syscalls`
-      (sudo/su/doas/pkexec exec deny + seccomp setid family deny)
-- [x] `sandkasten learn --yes` non-interactive capture for scripts / CI
+      (sudo/su/doas/pkexec exec deny across macOS + Linux + Homebrew +
+      Linuxbrew + Snap; seccomp setid-family deny).
+- [x] `sandkasten learn --yes` non-interactive capture for scripts / CI.
 - [x] Weekly Dependabot-grouped dependency updates (cargo + swift +
-      github-actions)
+      github-actions).
+- [ ] Transparent mock interposition via `LD_PRELOAD` /
+      `DYLD_INSERT_LIBRARIES`.
+- [ ] Live policy reload (SIGHUP → re-apply; sandbox_init only narrows).

@@ -91,7 +91,17 @@ jobs:
 
           tar -czf "${NAME}.tar.gz" -C dist "${NAME}"
           shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
-          ls -la "${NAME}.tar.gz"*
+
+          # Versionless alias so README/CI one-liners can use
+          # `https://github.com/.../releases/latest/download/sandkasten-<triple>.tar.gz`
+          # without needing to know the current tag. The alias is a
+          # byte-identical copy, not a symlink — GitHub Releases don't
+          # carry symlinks in assets.
+          ALIAS="sandkasten-${{ matrix.target }}.tar.gz"
+          cp "${NAME}.tar.gz" "${ALIAS}"
+          shasum -a 256 "${ALIAS}" > "${ALIAS}.sha256"
+
+          ls -la "${NAME}.tar.gz"* "${ALIAS}"*
 
       - uses: actions/upload-artifact@v7
         with:
