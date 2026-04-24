@@ -189,7 +189,8 @@ pub enum Command {
     },
 
     /// Run the target with full permissions in trace mode, then interactively
-    /// generate a tight profile from what the app actually did. macOS only.
+    /// generate a tight profile from what the app actually did. Works on
+    /// macOS (sandbox-trace) and Linux (strace fallback).
     Learn {
         /// Base template the generated profile will extend.
         #[arg(long, default_value = "strict")]
@@ -202,6 +203,14 @@ pub enum Command {
         /// Accept system-path reads, /tmp, and known-safe Mach services without prompting.
         #[arg(long)]
         auto_system: bool,
+
+        /// Skip every interactive prompt and auto-accept the widest profile
+        /// that captures the observed behaviour. Sensitive paths
+        /// (~/.ssh / Keychains / ~/.aws etc.) are still default-denied —
+        /// that bucket intentionally stays opt-in. Intended for scripted
+        /// / CI use where no tty is available.
+        #[arg(long, short = 'y')]
+        yes: bool,
 
         /// Working directory override.
         #[arg(long, short = 'C')]

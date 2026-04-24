@@ -11,7 +11,15 @@ use std::path::{Path, PathBuf};
 pub struct Options {
     pub base: String,
     pub output: Option<PathBuf>,
+    /// Auto-accept known-safe buckets (system-path reads, known Mach
+    /// services, etc.) without prompting. Leaves the ambiguous /
+    /// user-data buckets interactive.
     pub auto_system: bool,
+    /// Auto-accept **every** bucket — including rolled reads/writes,
+    /// home-literal reads, and outbound network. Intended for scripted
+    /// use; skips all interactive prompts and produces the widest
+    /// profile that captures everything the run actually did.
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -439,7 +447,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.system_reads.iter().map(|s| s.as_str()),
             "read-only, known-safe subtrees (libc, runtime, timezone, etc.)",
             DefaultAnswer::Yes,
-            opts.auto_system,
+            opts.auto_system || opts.yes,
         )?;
     }
     if !a.system_bins.is_empty() {
@@ -449,7 +457,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.system_bins.iter().map(|s| s.as_str()),
             "lets the sandboxed process launch stock utilities",
             DefaultAnswer::Yes,
-            opts.auto_system,
+            opts.auto_system || opts.yes,
         )?;
     }
     if a.tmp_used {
@@ -459,7 +467,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             TMP_SUBTREES.iter().copied(),
             "per-user tmp (read+write) — libc and frameworks often need this",
             DefaultAnswer::Yes,
-            opts.auto_system,
+            opts.auto_system || opts.yes,
         )?;
     }
     if a.cwd_reads || a.cwd_writes {
@@ -470,7 +478,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             [a.cwd.to_string_lossy().as_ref()].iter().copied(),
             "the app's \"own folder\" — emitted portably as ${CWD}",
             DefaultAnswer::Yes,
-            false,
+            opts.yes,
         )?;
     }
     if !a.rolled_up_subpaths_read.is_empty() {
@@ -485,7 +493,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             lines.iter().map(|s| s.as_str()),
             "3+ siblings observed; collapsed to the parent subpath",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
     if !a.rolled_up_subpaths_write.is_empty() {
@@ -500,7 +508,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             lines.iter().map(|s| s.as_str()),
             "writes observed across multiple siblings of a parent dir",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
     if !a.home_literals_read.is_empty() {
@@ -515,7 +523,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             lines.iter().map(|s| s.as_str()),
             "single-file reads under your home that are NOT sensitive",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
     if !a.other_reads.is_empty() {
@@ -530,7 +538,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             lines.iter().map(|s| s.as_str()),
             "paths outside system / CWD / home",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
     if !a.other_writes.is_empty() {
@@ -545,7 +553,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             lines.iter().map(|s| s.as_str()),
             "writes outside system / CWD / home — scrutinize carefully",
             DefaultAnswer::No,
-            false,
+            opts.yes,
         )?;
     }
     if !a.sensitive_hits.is_empty() {
@@ -555,7 +563,14 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
         }
         eprintln!("    These are default-DENIED. Emitted as explicit `deny` entries");
         eprintln!("    in the generated profile. Override only if you understand the risk.");
-        d.allow_sensitive = yes_no("    Override and ALLOW access to these paths?", false)?;
+        // Deliberately NOT auto-accepted by --yes: these are the paths
+        // most worth a conscious look even in "capture everything" mode.
+        d.allow_sensitive = if opts.yes {
+            eprintln!("    (left as default-deny; pass --yes-sensitive to override)");
+            false
+        } else {
+            yes_no("    Override and ALLOW access to these paths?", false)?
+        };
     }
 
     if !a.mach_safe.is_empty() {
@@ -565,7 +580,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.mach_safe.iter().map(|s| s.as_str()),
             "standard system bus endpoints",
             DefaultAnswer::Yes,
-            opts.auto_system,
+            opts.auto_system || opts.yes,
         )?;
     }
     if !a.mach_other.is_empty() {
@@ -575,7 +590,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.mach_other.iter().map(|s| s.as_str()),
             "unusual endpoints — scrutinize",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
 
@@ -611,18 +626,27 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
                     .join(", ")
             );
         }
-        let choice = choose(
-            "     mode? [d]eny / [s]pecific hosts / [w]ildcard by port",
-            &["d", "s", "w"],
-            "d",
-        )?;
-        d.outbound_mode = match choice.as_str() {
-            "s" => OutboundMode::Specific,
-            "w" => OutboundMode::WildcardByPort,
-            _ => OutboundMode::Deny,
+        d.outbound_mode = if opts.yes {
+            eprintln!("     (--yes: allowing specific observed hosts)");
+            OutboundMode::Specific
+        } else {
+            let choice = choose(
+                "     mode? [d]eny / [s]pecific hosts / [w]ildcard by port",
+                &["d", "s", "w"],
+                "d",
+            )?;
+            match choice.as_str() {
+                "s" => OutboundMode::Specific,
+                "w" => OutboundMode::WildcardByPort,
+                _ => OutboundMode::Deny,
+            }
         };
         if a.outbound_has_dns {
-            d.allow_dns = yes_no("     allow DNS (UDP:53 / TCP:53)?", true)?;
+            d.allow_dns = if opts.yes {
+                true
+            } else {
+                yes_no("     allow DNS (UDP:53 / TCP:53)?", true)?
+            };
         }
     }
 
@@ -632,7 +656,12 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
         for (proto, ep) in &a.inbound {
             eprintln!("     {proto:3} {ep}");
         }
-        d.allow_inbound = yes_no("     allow these inbound binds?", false)?;
+        d.allow_inbound = if opts.yes {
+            eprintln!("     (--yes: allowing observed inbound binds)");
+            true
+        } else {
+            yes_no("     allow these inbound binds?", false)?
+        };
     }
 
     if !a.sysctls.is_empty() {
@@ -642,7 +671,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.sysctls.iter().map(|s| s.as_str()),
             "kernel state reads — commonly safe",
             DefaultAnswer::Yes,
-            opts.auto_system,
+            opts.auto_system || opts.yes,
         )?;
     }
     if !a.iokit.is_empty() {
@@ -652,7 +681,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.iokit.iter().map(|s| s.as_str()),
             "hardware/device access",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
     if !a.ipc.is_empty() {
@@ -662,7 +691,7 @@ fn prompt_decisions(a: &Analysis, opts: &Options) -> Result<Decisions> {
             a.ipc.iter().map(|s| s.as_str()),
             "shared memory / semaphores",
             DefaultAnswer::Maybe,
-            false,
+            opts.yes,
         )?;
     }
 

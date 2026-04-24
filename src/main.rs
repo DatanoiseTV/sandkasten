@@ -202,9 +202,10 @@ fn run(args: cli::Cli) -> Result<i32> {
             base,
             output,
             auto_system,
+            yes,
             cwd,
             argv,
-        } => run_learn(&base, output, auto_system, cwd.as_deref(), &argv),
+        } => run_learn(&base, output, auto_system, yes, cwd.as_deref(), &argv),
         cli::Command::Ui { port, no_open } => {
             ui::run(port, !no_open)?;
             Ok(0)
@@ -444,6 +445,7 @@ fn run_learn(
     base: &str,
     output: Option<PathBuf>,
     auto_system: bool,
+    yes: bool,
     cwd: Option<&std::path::Path>,
     argv: &[String],
 ) -> Result<i32> {
@@ -454,6 +456,7 @@ fn run_learn(
         base: base.to_string(),
         output,
         auto_system,
+        yes,
     };
     #[cfg(target_os = "macos")]
     {
