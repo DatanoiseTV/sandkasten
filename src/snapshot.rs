@@ -74,10 +74,7 @@ pub fn load(profile: &Profile, profile_name: &str, snap_name: &str) -> Result<()
         bak.set_file_name(format!("{name}.bak-{ts}"));
         std::fs::rename(&upper, &bak)
             .with_context(|| format!("renaming {} → {}", upper.display(), bak.display()))?;
-        eprintln!(
-            "sandkasten │ previous upper moved to {}",
-            bak.display()
-        );
+        eprintln!("sandkasten │ previous upper moved to {}", bak.display());
     }
     std::fs::create_dir_all(upper.parent().unwrap_or(std::path::Path::new("/")))?;
     copy_tree(&src, &upper)
@@ -90,7 +87,9 @@ pub fn list(profile_name: &str) -> Result<Vec<String>> {
         Ok(d) => d,
         Err(_) => return Ok(Vec::new()),
     };
-    let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(Vec::new()) };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
     let mut out: Vec<String> = rd
         .flatten()
         .filter_map(|e| e.file_name().into_string().ok())

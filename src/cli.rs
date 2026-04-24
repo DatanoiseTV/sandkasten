@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, Args};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Subcommand, Debug)]
@@ -128,16 +128,11 @@ pub enum Command {
 
     /// Structural diff between two profiles — what each grants that the other
     /// does not. Works with built-in names, paths, and user profiles.
-    Diff {
-        left: String,
-        right: String,
-    },
+    Diff { left: String, right: String },
 
     /// Plain-English explanation of what a profile allows and denies. Great
     /// for reviewing an unfamiliar profile before running untrusted code.
-    Explain {
-        profile: String,
-    },
+    Explain { profile: String },
 
     /// Pre-flight environment check: kernel features, supporting tools,
     /// and OS-specific install commands for anything missing.
@@ -171,14 +166,10 @@ pub enum Command {
     },
 
     /// Validate a profile without running anything.
-    Check {
-        profile: String,
-    },
+    Check { profile: String },
 
     /// Render a profile to the native policy format (SBPL on macOS) for audit.
-    Render {
-        profile: String,
-    },
+    Render { profile: String },
 
     /// List profiles discoverable on this machine.
     List,

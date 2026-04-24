@@ -6,9 +6,7 @@
 
 use crate::config::Profile;
 use anyhow::{Context, Result};
-use seccompiler::{
-    BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch,
-};
+use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch};
 use std::collections::BTreeMap;
 
 pub fn install(_profile: &Profile) -> Result<()> {
@@ -48,10 +46,10 @@ pub fn install(_profile: &Profile) -> Result<()> {
         // with write access to any path + read access to system paths, an
         // attacker can pull a sensitive file into their writable dir by
         // linkat(), sidestepping Landlock's path-based rules. Blocking link
-        // creation is a cheap, broad mitigation.
-        libc::SYS_link,
+        // creation is a cheap, broad mitigation. Note: SYS_link and
+        // SYS_symlink only exist on legacy archs (x86_64); aarch64 kernels
+        // only provide the *at variants, which we block unconditionally.
         libc::SYS_linkat,
-        libc::SYS_symlink,
         libc::SYS_symlinkat,
         // Filesystem-by-handle syscalls that let the caller reopen a file
         // by a handle obtained in another mount namespace — classic
@@ -91,16 +89,23 @@ pub fn install(_profile: &Profile) -> Result<()> {
         // Process accounting — lets a root-in-userns attacker turn on
         // accounting and enumerate host process execs via the syscall.
         libc::SYS_acct,
-        // Legacy library loader — deprecated, occasionally abused for
-        // ELF parsing tricks.
-        libc::SYS_uselib,
         // Deprecated / legacy that should never be called by a modern
         // sandboxed binary and are thin wrappers for long-ago semantics.
         libc::SYS_lookup_dcookie,
     ];
 
+    // Syscalls only present on legacy archs (x86_64). aarch64 never
+    // exposed SYS_link, SYS_symlink, SYS_uselib, SYS_iopl or SYS_ioperm.
     #[cfg(target_arch = "x86_64")]
-    let extra_blocked: &[i64] = &[libc::SYS_iopl, libc::SYS_ioperm];
+    let extra_blocked: &[i64] = &[
+        libc::SYS_link,
+        libc::SYS_symlink,
+        // Legacy library loader — deprecated, occasionally abused for
+        // ELF parsing tricks.
+        libc::SYS_uselib,
+        libc::SYS_iopl,
+        libc::SYS_ioperm,
+    ];
     #[cfg(not(target_arch = "x86_64"))]
     let extra_blocked: &[i64] = &[];
 
@@ -111,7 +116,7 @@ pub fn install(_profile: &Profile) -> Result<()> {
 
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow,           // default: allow
+        SeccompAction::Allow,                     // default: allow
         SeccompAction::Errno(libc::EPERM as u32), // blocked: EPERM
         arch,
     )

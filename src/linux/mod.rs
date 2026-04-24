@@ -141,7 +141,10 @@ pub fn render(p: &Profile) -> String {
     s.push_str("\n[namespaces]\n");
     s.push_str("  user, mount, pid, ipc, uts");
     let net_mode = net_mode(p);
-    s.push_str(&format!("{}\n", if net_mode.unshare_net { ", net" } else { "" }));
+    s.push_str(&format!(
+        "{}\n",
+        if net_mode.unshare_net { ", net" } else { "" }
+    ));
 
     s.push_str("\n[filesystem — Landlock ruleset]\n");
     for p in &p.filesystem.read {
@@ -160,8 +163,12 @@ pub fn render(p: &Profile) -> String {
     s.push_str("\n[network]\n");
     s.push_str(&format!("  mode: {}\n", net_mode.label));
     if !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty() {
-        s.push_str("  per-IP filtering: applied via nftables inside the netns when `nft` is installed.\n");
-        s.push_str("  external connectivity: requires pasta, slirp4netns, or an already-plumbed netns.\n");
+        s.push_str(
+            "  per-IP filtering: applied via nftables inside the netns when `nft` is installed.\n",
+        );
+        s.push_str(
+            "  external connectivity: requires pasta, slirp4netns, or an already-plumbed netns.\n",
+        );
         for ep in &p.network.outbound_tcp {
             s.push_str(&format!("    tcp → {ep}\n"));
         }

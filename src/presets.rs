@@ -162,7 +162,7 @@ fn apply_preset(p: &mut Profile, name: &str) {
             // Tailscale control plane over HTTPS + DERP, plus WireGuard.
             add_tcp(p, "*:443");
             add_udp(p, "*:41641"); // DERP default
-            add_udp(p, "*:3478");  // STUN
+            add_udp(p, "*:3478"); // STUN
             p.network.allow_dns = true;
         }
         "ipsec" | "strongswan" => {

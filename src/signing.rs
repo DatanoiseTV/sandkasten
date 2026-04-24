@@ -50,8 +50,8 @@ pub fn verify(profile: &Path) -> Result<VerifyReport> {
             profile.display()
         ));
     }
-    let content = std::fs::read(profile)
-        .with_context(|| format!("reading {}", profile.display()))?;
+    let content =
+        std::fs::read(profile).with_context(|| format!("reading {}", profile.display()))?;
     let sig_text = std::fs::read_to_string(&sig_path)
         .with_context(|| format!("reading {}", sig_path.display()))?;
     let signature = Signature::decode(&sig_text)
@@ -66,7 +66,9 @@ pub fn verify(profile: &Path) -> Result<VerifyReport> {
     }
 
     for (source, key_text) in &keys {
-        let Ok(pk) = PublicKey::decode(key_text) else { continue };
+        let Ok(pk) = PublicKey::decode(key_text) else {
+            continue;
+        };
         if pk.verify(&content, &signature, false).is_ok() {
             return Ok(VerifyReport {
                 profile: profile.to_path_buf(),

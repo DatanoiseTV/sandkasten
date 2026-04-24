@@ -2,7 +2,7 @@
 //! deterministic rendering from the profile data model so the output is
 //! reviewable, auditable, and stable across runs.
 
-use crate::config::{Profile, Network};
+use crate::config::{Network, Profile};
 use std::fmt::Write as _;
 
 /// Produce a multi-paragraph human summary of what the profile grants and
@@ -36,21 +36,41 @@ pub fn explain(p: &Profile) -> String {
             let _ = writeln!(s, "  • read + write under: {}", fs.read_write.join(", "));
         }
         if !fs.read_files.is_empty() {
-            let _ = writeln!(s, "  • read these specific files: {}", fs.read_files.join(", "));
+            let _ = writeln!(
+                s,
+                "  • read these specific files: {}",
+                fs.read_files.join(", ")
+            );
         }
         if !fs.read_write_files.is_empty() {
-            let _ = writeln!(s, "  • read+write these files: {}", fs.read_write_files.join(", "));
+            let _ = writeln!(
+                s,
+                "  • read+write these files: {}",
+                fs.read_write_files.join(", ")
+            );
         }
     }
     if !fs.deny.is_empty() {
-        let _ = writeln!(s, "  • explicitly denied (overrides any allow): {}", fs.deny.join(", "));
+        let _ = writeln!(
+            s,
+            "  • explicitly denied (overrides any allow): {}",
+            fs.deny.join(", ")
+        );
     }
     if !fs.rules.is_empty() {
         let _ = writeln!(s, "  • fine-grained rules:");
         for r in &fs.rules {
             let kind = if r.literal { "file" } else { "subtree" };
-            let allows = if r.allow.is_empty() { "nothing".to_string() } else { r.allow.join(", ") };
-            let denies = if r.deny.is_empty() { String::new() } else { format!(", denies: {}", r.deny.join(", ")) };
+            let allows = if r.allow.is_empty() {
+                "nothing".to_string()
+            } else {
+                r.allow.join(", ")
+            };
+            let denies = if r.deny.is_empty() {
+                String::new()
+            } else {
+                format!(", denies: {}", r.deny.join(", "))
+            };
             let _ = writeln!(s, "      {kind} {} → allows: {allows}{denies}", r.path);
         }
     }
@@ -120,14 +140,33 @@ pub fn explain(p: &Profile) -> String {
         || !l.core_dumps;
     if any_limit {
         s.push_str("Limits\n");
-        if let Some(v) = l.cpu_seconds           { let _ = writeln!(s, "  • CPU seconds:      {v}"); }
-        if let Some(v) = l.memory_mb             { let _ = writeln!(s, "  • Max memory:       {v} MiB"); }
-        if let Some(v) = l.file_size_mb          { let _ = writeln!(s, "  • Max file size:    {v} MiB"); }
-        if let Some(v) = l.open_files            { let _ = writeln!(s, "  • Max open FDs:     {v}"); }
-        if let Some(v) = l.processes             { let _ = writeln!(s, "  • Max processes:    {v} (fork-bomb guard)"); }
-        if let Some(v) = l.stack_mb              { let _ = writeln!(s, "  • Max stack:        {v} MiB"); }
-        if let Some(v) = l.wall_timeout_seconds  { let _ = writeln!(s, "  • Wall-clock limit: {v} seconds (SIGTERM → SIGKILL +3s)"); }
-        if !l.core_dumps                          { s.push_str("  • Core dumps disabled (crash can't spill memory to disk).\n"); }
+        if let Some(v) = l.cpu_seconds {
+            let _ = writeln!(s, "  • CPU seconds:      {v}");
+        }
+        if let Some(v) = l.memory_mb {
+            let _ = writeln!(s, "  • Max memory:       {v} MiB");
+        }
+        if let Some(v) = l.file_size_mb {
+            let _ = writeln!(s, "  • Max file size:    {v} MiB");
+        }
+        if let Some(v) = l.open_files {
+            let _ = writeln!(s, "  • Max open FDs:     {v}");
+        }
+        if let Some(v) = l.processes {
+            let _ = writeln!(s, "  • Max processes:    {v} (fork-bomb guard)");
+        }
+        if let Some(v) = l.stack_mb {
+            let _ = writeln!(s, "  • Max stack:        {v} MiB");
+        }
+        if let Some(v) = l.wall_timeout_seconds {
+            let _ = writeln!(
+                s,
+                "  • Wall-clock limit: {v} seconds (SIGTERM → SIGKILL +3s)"
+            );
+        }
+        if !l.core_dumps {
+            s.push_str("  • Core dumps disabled (crash can't spill memory to disk).\n");
+        }
         s.push('\n');
     }
 
@@ -135,7 +174,11 @@ pub fn explain(p: &Profile) -> String {
     if p.workspace.path.is_some() || p.overlay.lower.is_some() || !p.mocks.files.is_empty() {
         s.push_str("Workspace / overlay / mocks\n");
         if let Some(w) = &p.workspace.path {
-            let cd = if p.workspace.chdir { ", initial CWD" } else { "" };
+            let cd = if p.workspace.chdir {
+                ", initial CWD"
+            } else {
+                ""
+            };
             let _ = writeln!(s, "  • persistent workspace: {w}{cd}");
         }
         if let (Some(l), Some(u)) = (&p.overlay.lower, &p.overlay.upper) {
@@ -143,7 +186,11 @@ pub fn explain(p: &Profile) -> String {
         }
         if !p.mocks.files.is_empty() {
             let names: Vec<_> = p.mocks.files.keys().cloned().collect();
-            let _ = writeln!(s, "  • mock files via $SANDKASTEN_MOCKS: {}", names.join(", "));
+            let _ = writeln!(
+                s,
+                "  • mock files via $SANDKASTEN_MOCKS: {}",
+                names.join(", ")
+            );
         }
         s.push('\n');
     }
@@ -177,16 +224,36 @@ fn explain_network(n: &Network) -> String {
         s.push_str("  • fully isolated — no network at all.\n");
         return s;
     }
-    if n.allow_localhost { s.push_str("  • loopback (127.0.0.1 / ::1) permitted\n"); }
-    if n.allow_dns       { s.push_str("  • DNS resolution permitted\n"); }
-    if n.allow_inbound   { s.push_str("  • may bind inbound listeners\n"); }
-    if n.allow_icmp      { s.push_str("  • ICMP (ping)\n"); }
-    if n.allow_icmpv6    { s.push_str("  • ICMPv6\n"); }
-    if n.allow_sctp      { s.push_str("  • SCTP\n"); }
-    if n.allow_dccp      { s.push_str("  • DCCP\n"); }
-    if n.allow_udplite   { s.push_str("  • UDP-Lite\n"); }
-    if n.allow_raw_sockets { s.push_str("  • RAW sockets (packet-crafting ability — privileged)\n"); }
-    if n.allow_unix_sockets { s.push_str("  • UNIX-domain sockets\n"); }
+    if n.allow_localhost {
+        s.push_str("  • loopback (127.0.0.1 / ::1) permitted\n");
+    }
+    if n.allow_dns {
+        s.push_str("  • DNS resolution permitted\n");
+    }
+    if n.allow_inbound {
+        s.push_str("  • may bind inbound listeners\n");
+    }
+    if n.allow_icmp {
+        s.push_str("  • ICMP (ping)\n");
+    }
+    if n.allow_icmpv6 {
+        s.push_str("  • ICMPv6\n");
+    }
+    if n.allow_sctp {
+        s.push_str("  • SCTP\n");
+    }
+    if n.allow_dccp {
+        s.push_str("  • DCCP\n");
+    }
+    if n.allow_udplite {
+        s.push_str("  • UDP-Lite\n");
+    }
+    if n.allow_raw_sockets {
+        s.push_str("  • RAW sockets (packet-crafting ability — privileged)\n");
+    }
+    if n.allow_unix_sockets {
+        s.push_str("  • UNIX-domain sockets\n");
+    }
     if !n.outbound_tcp.is_empty() {
         let _ = writeln!(s, "  • outbound TCP to: {}", n.outbound_tcp.join(", "));
     }
@@ -200,7 +267,11 @@ fn explain_network(n: &Network) -> String {
         let _ = writeln!(s, "  • inbound UDP binds: {}", n.inbound_udp.join(", "));
     }
     if !n.extra_protocols.is_empty() {
-        let _ = writeln!(s, "  • extra L4 protocols: {}", n.extra_protocols.join(", "));
+        let _ = writeln!(
+            s,
+            "  • extra L4 protocols: {}",
+            n.extra_protocols.join(", ")
+        );
     }
     if !n.presets.is_empty() {
         let _ = writeln!(s, "  • protocol presets: {}", n.presets.join(", "));
@@ -208,7 +279,13 @@ fn explain_network(n: &Network) -> String {
     if !n.redirects.is_empty() {
         s.push_str("  • Linux DNAT redirects:\n");
         for r in &n.redirects {
-            let _ = writeln!(s, "      {} → {} ({})", r.from, r.to, r.protocol.as_deref().unwrap_or("tcp"));
+            let _ = writeln!(
+                s,
+                "      {} → {} ({})",
+                r.from,
+                r.to,
+                r.protocol.as_deref().unwrap_or("tcp")
+            );
         }
     }
     if !n.blocks.is_empty() {
@@ -236,7 +313,11 @@ fn explain_network(n: &Network) -> String {
 }
 
 fn yn(b: bool) -> &'static str {
-    if b { "yes" } else { "no" }
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 // ── diff ─────────────────────────────────────────────────────────────────
@@ -259,8 +340,12 @@ pub fn diff(left: &Profile, right: &Profile) -> String {
             let only_r: Vec<_> = r.difference(&l).collect();
             if !only_l.is_empty() || !only_r.is_empty() {
                 let _ = writeln!(s, "{}:", $title);
-                for x in only_l { let _ = writeln!(s, "  − {x}"); }
-                for x in only_r { let _ = writeln!(s, "  + {x}"); }
+                for x in only_l {
+                    let _ = writeln!(s, "  − {x}");
+                }
+                for x in only_r {
+                    let _ = writeln!(s, "  + {x}");
+                }
                 s.push('\n');
             }
         }};
@@ -273,41 +358,153 @@ pub fn diff(left: &Profile, right: &Profile) -> String {
         }};
     }
 
-    list_diff!("filesystem.read",             left.filesystem.read,             right.filesystem.read);
-    list_diff!("filesystem.read_write",       left.filesystem.read_write,       right.filesystem.read_write);
-    list_diff!("filesystem.read_files",       left.filesystem.read_files,       right.filesystem.read_files);
-    list_diff!("filesystem.read_write_files", left.filesystem.read_write_files, right.filesystem.read_write_files);
-    list_diff!("filesystem.deny",             left.filesystem.deny,             right.filesystem.deny);
+    list_diff!(
+        "filesystem.read",
+        left.filesystem.read,
+        right.filesystem.read
+    );
+    list_diff!(
+        "filesystem.read_write",
+        left.filesystem.read_write,
+        right.filesystem.read_write
+    );
+    list_diff!(
+        "filesystem.read_files",
+        left.filesystem.read_files,
+        right.filesystem.read_files
+    );
+    list_diff!(
+        "filesystem.read_write_files",
+        left.filesystem.read_write_files,
+        right.filesystem.read_write_files
+    );
+    list_diff!(
+        "filesystem.deny",
+        left.filesystem.deny,
+        right.filesystem.deny
+    );
 
-    list_diff!("network.outbound_tcp", left.network.outbound_tcp, right.network.outbound_tcp);
-    list_diff!("network.outbound_udp", left.network.outbound_udp, right.network.outbound_udp);
-    list_diff!("network.inbound_tcp",  left.network.inbound_tcp,  right.network.inbound_tcp);
-    list_diff!("network.inbound_udp",  left.network.inbound_udp,  right.network.inbound_udp);
-    list_diff!("network.presets",      left.network.presets,      right.network.presets);
+    list_diff!(
+        "network.outbound_tcp",
+        left.network.outbound_tcp,
+        right.network.outbound_tcp
+    );
+    list_diff!(
+        "network.outbound_udp",
+        left.network.outbound_udp,
+        right.network.outbound_udp
+    );
+    list_diff!(
+        "network.inbound_tcp",
+        left.network.inbound_tcp,
+        right.network.inbound_tcp
+    );
+    list_diff!(
+        "network.inbound_udp",
+        left.network.inbound_udp,
+        right.network.inbound_udp
+    );
+    list_diff!(
+        "network.presets",
+        left.network.presets,
+        right.network.presets
+    );
 
-    bool_diff!("network.allow_localhost",    left.network.allow_localhost,    right.network.allow_localhost);
-    bool_diff!("network.allow_dns",          left.network.allow_dns,          right.network.allow_dns);
-    bool_diff!("network.allow_inbound",      left.network.allow_inbound,      right.network.allow_inbound);
-    bool_diff!("network.allow_icmp",         left.network.allow_icmp,         right.network.allow_icmp);
-    bool_diff!("network.allow_icmpv6",       left.network.allow_icmpv6,       right.network.allow_icmpv6);
-    bool_diff!("network.allow_sctp",         left.network.allow_sctp,         right.network.allow_sctp);
-    bool_diff!("network.allow_dccp",         left.network.allow_dccp,         right.network.allow_dccp);
-    bool_diff!("network.allow_udplite",      left.network.allow_udplite,      right.network.allow_udplite);
-    bool_diff!("network.allow_raw_sockets",  left.network.allow_raw_sockets,  right.network.allow_raw_sockets);
-    bool_diff!("network.allow_unix_sockets", left.network.allow_unix_sockets, right.network.allow_unix_sockets);
+    bool_diff!(
+        "network.allow_localhost",
+        left.network.allow_localhost,
+        right.network.allow_localhost
+    );
+    bool_diff!(
+        "network.allow_dns",
+        left.network.allow_dns,
+        right.network.allow_dns
+    );
+    bool_diff!(
+        "network.allow_inbound",
+        left.network.allow_inbound,
+        right.network.allow_inbound
+    );
+    bool_diff!(
+        "network.allow_icmp",
+        left.network.allow_icmp,
+        right.network.allow_icmp
+    );
+    bool_diff!(
+        "network.allow_icmpv6",
+        left.network.allow_icmpv6,
+        right.network.allow_icmpv6
+    );
+    bool_diff!(
+        "network.allow_sctp",
+        left.network.allow_sctp,
+        right.network.allow_sctp
+    );
+    bool_diff!(
+        "network.allow_dccp",
+        left.network.allow_dccp,
+        right.network.allow_dccp
+    );
+    bool_diff!(
+        "network.allow_udplite",
+        left.network.allow_udplite,
+        right.network.allow_udplite
+    );
+    bool_diff!(
+        "network.allow_raw_sockets",
+        left.network.allow_raw_sockets,
+        right.network.allow_raw_sockets
+    );
+    bool_diff!(
+        "network.allow_unix_sockets",
+        left.network.allow_unix_sockets,
+        right.network.allow_unix_sockets
+    );
 
-    bool_diff!("process.allow_fork",        left.process.allow_fork,        right.process.allow_fork);
-    bool_diff!("process.allow_exec",        left.process.allow_exec,        right.process.allow_exec);
-    bool_diff!("process.allow_signal_self", left.process.allow_signal_self, right.process.allow_signal_self);
+    bool_diff!(
+        "process.allow_fork",
+        left.process.allow_fork,
+        right.process.allow_fork
+    );
+    bool_diff!(
+        "process.allow_exec",
+        left.process.allow_exec,
+        right.process.allow_exec
+    );
+    bool_diff!(
+        "process.allow_signal_self",
+        left.process.allow_signal_self,
+        right.process.allow_signal_self
+    );
 
-    bool_diff!("system.allow_sysctl_read", left.system.allow_sysctl_read, right.system.allow_sysctl_read);
-    bool_diff!("system.allow_iokit",       left.system.allow_iokit,       right.system.allow_iokit);
-    bool_diff!("system.allow_ipc",         left.system.allow_ipc,         right.system.allow_ipc);
-    bool_diff!("system.allow_mach_all",    left.system.allow_mach_all,    right.system.allow_mach_all);
-    list_diff!("system.mach_services",     left.system.mach_services,     right.system.mach_services);
+    bool_diff!(
+        "system.allow_sysctl_read",
+        left.system.allow_sysctl_read,
+        right.system.allow_sysctl_read
+    );
+    bool_diff!(
+        "system.allow_iokit",
+        left.system.allow_iokit,
+        right.system.allow_iokit
+    );
+    bool_diff!(
+        "system.allow_ipc",
+        left.system.allow_ipc,
+        right.system.allow_ipc
+    );
+    bool_diff!(
+        "system.allow_mach_all",
+        left.system.allow_mach_all,
+        right.system.allow_mach_all
+    );
+    list_diff!(
+        "system.mach_services",
+        left.system.mach_services,
+        right.system.mach_services
+    );
 
     bool_diff!("env.pass_all", left.env.pass_all, right.env.pass_all);
-    list_diff!("env.pass",     left.env.pass,     right.env.pass);
+    list_diff!("env.pass", left.env.pass, right.env.pass);
 
     if s.lines().count() == 3 {
         s.push_str("(no structural differences)\n");

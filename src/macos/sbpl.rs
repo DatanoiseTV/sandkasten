@@ -193,7 +193,9 @@ pub fn generate(p: &Profile) -> String {
         for proto in &p.network.extra_protocols {
             match proto.as_str() {
                 "icmp" => s.push_str("(allow network-outbound (remote icmp \"*:*\"))\n"),
-                "icmp6" | "icmpv6" => s.push_str("(allow network-outbound (remote icmp6 \"*:*\"))\n"),
+                "icmp6" | "icmpv6" => {
+                    s.push_str("(allow network-outbound (remote icmp6 \"*:*\"))\n");
+                }
                 "ip" | "ip4" | "ip6" => {
                     let _ = writeln!(s, "(allow network-outbound (remote {proto} \"*:*\"))");
                 }
@@ -268,21 +270,13 @@ pub fn generate(p: &Profile) -> String {
     if !p.filesystem.deny.is_empty() {
         s.push_str(";; --- deny overrides (last match wins) ---\n");
         for path in &p.filesystem.deny {
-            let _ = writeln!(
-                s,
-                "(deny file-read* file-write* (subpath {}))",
-                quote(path)
-            );
+            let _ = writeln!(s, "(deny file-read* file-write* (subpath {}))", quote(path));
         }
     }
     if !p.filesystem.hide.is_empty() {
         s.push_str(";; --- hide paths (macOS best-effort — returns EPERM, not ENOENT) ---\n");
         for path in &p.filesystem.hide {
-            let _ = writeln!(
-                s,
-                "(deny file-read* file-write* (subpath {}))",
-                quote(path)
-            );
+            let _ = writeln!(s, "(deny file-read* file-write* (subpath {}))", quote(path));
         }
         s.push_str(
             ";; NOTE: macOS cannot make denied paths look like ENOENT without a\n\
@@ -313,8 +307,7 @@ pub fn generate(p: &Profile) -> String {
                 );
             }
         }
-        if p
-            .network
+        if p.network
             .blocks
             .iter()
             .any(|b| !matches!(b.host.as_str(), "localhost" | "*"))
@@ -358,7 +351,6 @@ fn map_op(op: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
-
 
 fn local_sbpl(e: &Endpoint, widened: &mut bool) -> String {
     let host_str = match &e.host {
@@ -471,7 +463,9 @@ mod tests {
         p.filesystem.deny = vec!["/Users/alice/.ssh".into()];
         let s = generate(&p);
         let allow_pos = s.find("(allow file-read* (subpath \"/\"))").unwrap();
-        let deny_pos = s.find("(deny file-read* file-write* (subpath \"/Users/alice/.ssh\"))").unwrap();
+        let deny_pos = s
+            .find("(deny file-read* file-write* (subpath \"/Users/alice/.ssh\"))")
+            .unwrap();
         assert!(deny_pos > allow_pos);
     }
 

@@ -41,8 +41,7 @@ pub fn process(ops: BTreeSet<Op>, cwd: &Path, opts: &Options) -> Result<i32> {
         .output
         .clone()
         .unwrap_or_else(|| PathBuf::from("learned.toml"));
-    std::fs::write(&out_path, &toml)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, &toml).with_context(|| format!("writing {}", out_path.display()))?;
     eprintln!("\nsandkasten: wrote profile to {}", out_path.display());
     eprintln!(
         "            try it with:  sandkasten run {} -- <your-cmd>",
@@ -818,8 +817,7 @@ fn emit_toml(base: &str, a: &Analysis, d: &Decisions) -> Result<String> {
         s.push('\n');
     }
 
-    let any_net =
-        d.allow_dns || d.outbound_mode != OutboundMode::Deny || d.allow_inbound;
+    let any_net = d.allow_dns || d.outbound_mode != OutboundMode::Deny || d.allow_inbound;
     if any_net {
         s.push_str("[network]\n");
         if d.allow_dns {
@@ -861,11 +859,8 @@ fn emit_toml(base: &str, a: &Analysis, d: &Decisions) -> Result<String> {
         s.push_str("allow_exec = true\n\n");
     }
 
-    let any_sys = d.allow_mach_safe
-        || d.allow_mach_other
-        || d.allow_sysctls
-        || d.allow_iokit
-        || d.allow_ipc;
+    let any_sys =
+        d.allow_mach_safe || d.allow_mach_other || d.allow_sysctls || d.allow_iokit || d.allow_ipc;
     if any_sys {
         s.push_str("[system]\n");
         if d.allow_sysctls {

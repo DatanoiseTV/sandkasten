@@ -5,8 +5,18 @@ use std::path::{Path, PathBuf};
 /// Known per-op tokens, cross-checked from the macOS SBPL mapper so form UIs
 /// and the validator agree on the vocabulary.
 pub const KNOWN_OPS: &[&str] = &[
-    "read", "write", "create", "delete", "rename", "chmod", "chown",
-    "xattr", "ioctl", "exec", "all", "write-all",
+    "read",
+    "write",
+    "create",
+    "delete",
+    "rename",
+    "chmod",
+    "chown",
+    "xattr",
+    "ioctl",
+    "exec",
+    "all",
+    "write-all",
 ];
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -722,8 +732,8 @@ impl Profile {
         out.extends = None;
 
         // Filesystem — concat lists, child scalars win
-        out.filesystem.allow_metadata_read = self.filesystem.allow_metadata_read
-            || out.filesystem.allow_metadata_read;
+        out.filesystem.allow_metadata_read =
+            self.filesystem.allow_metadata_read || out.filesystem.allow_metadata_read;
         extend(&mut out.filesystem.read, self.filesystem.read);
         extend(&mut out.filesystem.read_write, self.filesystem.read_write);
         extend(&mut out.filesystem.deny, self.filesystem.deny);
@@ -753,7 +763,10 @@ impl Profile {
         out.network.allow_udplite |= self.network.allow_udplite;
         out.network.allow_raw_sockets |= self.network.allow_raw_sockets;
         out.network.allow_unix_sockets |= self.network.allow_unix_sockets;
-        extend(&mut out.network.extra_protocols, self.network.extra_protocols);
+        extend(
+            &mut out.network.extra_protocols,
+            self.network.extra_protocols,
+        );
         extend(&mut out.network.presets, self.network.presets);
         // DNS & hosts: child wins on any set value, otherwise inherit.
         if !self.network.dns.servers.is_empty() {
@@ -814,11 +827,11 @@ impl Profile {
         }
 
         // Hardware flags: additive.
-        out.hardware.usb            |= self.hardware.usb;
-        out.hardware.serial         |= self.hardware.serial;
-        out.hardware.audio          |= self.hardware.audio;
-        out.hardware.gpu            |= self.hardware.gpu;
-        out.hardware.camera         |= self.hardware.camera;
+        out.hardware.usb |= self.hardware.usb;
+        out.hardware.serial |= self.hardware.serial;
+        out.hardware.audio |= self.hardware.audio;
+        out.hardware.gpu |= self.hardware.gpu;
+        out.hardware.camera |= self.hardware.camera;
         out.hardware.screen_capture |= self.hardware.screen_capture;
         extend(&mut out.hardware.video.devices, self.hardware.video.devices);
         for (k, v) in self.hardware.video.redirect {
@@ -826,25 +839,25 @@ impl Profile {
         }
 
         // Spoof: child scalar wins where set.
-        out.spoof.cpu_count       = self.spoof.cpu_count.or(out.spoof.cpu_count);
-        out.spoof.cpuinfo_synth  |= self.spoof.cpuinfo_synth;
-        out.spoof.cpuinfo_model   = self.spoof.cpuinfo_model.or(out.spoof.cpuinfo_model);
-        out.spoof.cpuinfo_mhz     = self.spoof.cpuinfo_mhz.or(out.spoof.cpuinfo_mhz);
-        out.spoof.hostname        = self.spoof.hostname.or(out.spoof.hostname);
-        out.spoof.machine_id      = self.spoof.machine_id.or(out.spoof.machine_id);
+        out.spoof.cpu_count = self.spoof.cpu_count.or(out.spoof.cpu_count);
+        out.spoof.cpuinfo_synth |= self.spoof.cpuinfo_synth;
+        out.spoof.cpuinfo_model = self.spoof.cpuinfo_model.or(out.spoof.cpuinfo_model);
+        out.spoof.cpuinfo_mhz = self.spoof.cpuinfo_mhz.or(out.spoof.cpuinfo_mhz);
+        out.spoof.hostname = self.spoof.hostname.or(out.spoof.hostname);
+        out.spoof.machine_id = self.spoof.machine_id.or(out.spoof.machine_id);
         for (k, v) in self.spoof.dmi {
             out.spoof.dmi.insert(k, v);
         }
         out.spoof.files.extend(self.spoof.files);
-        out.spoof.temperature_c     = self.spoof.temperature_c.or(out.spoof.temperature_c);
+        out.spoof.temperature_c = self.spoof.temperature_c.or(out.spoof.temperature_c);
         out.spoof.efi_platform_size = self.spoof.efi_platform_size.or(out.spoof.efi_platform_size);
-        out.spoof.efi_enabled       = self.spoof.efi_enabled.or(out.spoof.efi_enabled);
-        out.spoof.kernel_version    = self.spoof.kernel_version.or(out.spoof.kernel_version);
-        out.spoof.kernel_release    = self.spoof.kernel_release.or(out.spoof.kernel_release);
-        out.spoof.os_release        = self.spoof.os_release.or(out.spoof.os_release);
-        out.spoof.issue             = self.spoof.issue.or(out.spoof.issue);
-        out.spoof.hostid_hex        = self.spoof.hostid_hex.or(out.spoof.hostid_hex);
-        out.spoof.timezone          = self.spoof.timezone.or(out.spoof.timezone);
+        out.spoof.efi_enabled = self.spoof.efi_enabled.or(out.spoof.efi_enabled);
+        out.spoof.kernel_version = self.spoof.kernel_version.or(out.spoof.kernel_version);
+        out.spoof.kernel_release = self.spoof.kernel_release.or(out.spoof.kernel_release);
+        out.spoof.os_release = self.spoof.os_release.or(out.spoof.os_release);
+        out.spoof.issue = self.spoof.issue.or(out.spoof.issue);
+        out.spoof.hostid_hex = self.spoof.hostid_hex.or(out.spoof.hostid_hex);
+        out.spoof.timezone = self.spoof.timezone.or(out.spoof.timezone);
 
         // Workspace & overlay: child scalars win when set.
         if self.workspace.path.is_some() {
@@ -1011,9 +1024,12 @@ impl ExpandContext {
                     out.push_str(&val);
                     i += 2 + end + 1;
                     continue;
-                } else if i + 1 < bytes.len() && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_') {
+                } else if i + 1 < bytes.len()
+                    && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
+                {
                     let mut j = i + 1;
-                    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                    {
                         j += 1;
                     }
                     let name = &s[i + 1..j];
@@ -1147,7 +1163,10 @@ pub fn resolve_profile_path(name: &str) -> Result<PathBuf> {
     }
 
     if let Some(conf) = dirs::config_dir() {
-        let p = conf.join("sandkasten").join("profiles").join(format!("{name}.toml"));
+        let p = conf
+            .join("sandkasten")
+            .join("profiles")
+            .join(format!("{name}.toml"));
         if p.exists() {
             return Ok(p);
         }
@@ -1211,9 +1230,14 @@ fn apply_proxy(p: &mut Profile) {
     let Some(url) = p.network.proxy.url.clone() else {
         return;
     };
-    for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                "http_proxy", "https_proxy", "all_proxy"]
-    {
+    for var in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
         p.env.set.entry(var.into()).or_insert_with(|| url.clone());
     }
     if !p.network.proxy.bypass.is_empty() {
@@ -1222,10 +1246,7 @@ fn apply_proxy(p: &mut Profile) {
             .set
             .entry("NO_PROXY".into())
             .or_insert_with(|| joined.clone());
-        p.env
-            .set
-            .entry("no_proxy".into())
-            .or_insert(joined);
+        p.env.set.entry("no_proxy".into()).or_insert(joined);
     }
     // Restrict outbound to the proxy's host:port (and DNS + the explicit
     // proxy bypass entries) when the user hasn't listed other destinations.
@@ -1242,7 +1263,7 @@ fn apply_proxy(p: &mut Profile) {
 fn host_port_from_url(u: &str) -> Option<String> {
     // Cheap parser — no url crate dep.
     //  scheme://host[:port][/...]
-    let after = u.splitn(2, "://").nth(1)?;
+    let after = u.split_once("://")?.1;
     let host_part = after.split(['/', '?', '#']).next()?;
     if host_part.contains(':') {
         Some(host_part.to_string())
@@ -1335,10 +1356,6 @@ mod tests {
         let raw = Profile::from_toml_str(crate::templates::SELF).unwrap();
         let raw = merge_parents(raw).unwrap();
         let p = finalize(raw, &ctx()).unwrap();
-        assert!(p
-            .filesystem
-            .read_write
-            .iter()
-            .any(|s| s == "/work/project"));
+        assert!(p.filesystem.read_write.iter().any(|s| s == "/work/project"));
     }
 }

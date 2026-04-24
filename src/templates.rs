@@ -10,13 +10,34 @@ pub const BROWSER: &str = include_str!("../templates/browser.toml");
 pub const ELECTRON: &str = include_str!("../templates/electron.toml");
 
 pub const LIST: &[(&str, &str)] = &[
-    ("self", "Default. Sandbox sees only its own working directory (${CWD}). No network."),
-    ("strict", "Near-zero permissions. Minimal base every CLI needs to start."),
-    ("minimal-cli", "Read /usr /System + /etc/hosts. No network, no writes."),
-    ("network-client", "Outbound HTTPS + DNS only. Read-only filesystem."),
-    ("dev", "Permissive development sandbox. Writes to CWD + TMPDIR, localhost."),
-    ("browser", "Chromium-family browsers. Use with --no-sandbox flag."),
-    ("electron", "Electron apps (VS Code, Slack, Discord, Obsidian, …)."),
+    (
+        "self",
+        "Default. Sandbox sees only its own working directory (${CWD}). No network.",
+    ),
+    (
+        "strict",
+        "Near-zero permissions. Minimal base every CLI needs to start.",
+    ),
+    (
+        "minimal-cli",
+        "Read /usr /System + /etc/hosts. No network, no writes.",
+    ),
+    (
+        "network-client",
+        "Outbound HTTPS + DNS only. Read-only filesystem.",
+    ),
+    (
+        "dev",
+        "Permissive development sandbox. Writes to CWD + TMPDIR, localhost.",
+    ),
+    (
+        "browser",
+        "Chromium-family browsers. Use with --no-sandbox flag.",
+    ),
+    (
+        "electron",
+        "Electron apps (VS Code, Slack, Discord, Obsidian, …).",
+    ),
 ];
 
 pub fn builtin(name: &str) -> Option<&'static str> {

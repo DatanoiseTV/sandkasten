@@ -50,7 +50,9 @@ pub fn show_since(window: Duration, child_pid: Option<i32>) {
     for line in text.lines() {
         // Lines look like:
         //   2026-04-24 00:21:03.123 Error ... kernel: (Sandbox) Sandbox: cat(50334) deny(1) file-read-data /foo
-        let Some(deny_idx) = line.find("deny(") else { continue };
+        let Some(deny_idx) = line.find("deny(") else {
+            continue;
+        };
 
         // Extract PID: the token before "Sandbox: " then after "name(PID)".
         if let Some(pid) = extract_denied_pid(line) {
@@ -65,7 +67,9 @@ pub fn show_since(window: Duration, child_pid: Option<i32>) {
         }
 
         let after = &line[deny_idx..];
-        let Some(op_start) = after.find(' ') else { continue };
+        let Some(op_start) = after.find(' ') else {
+            continue;
+        };
         let rest = after[op_start + 1..].trim();
         let (op, target) = match rest.split_once(char::is_whitespace) {
             Some((o, t)) => (o.to_string(), t.trim().to_string()),
@@ -83,10 +87,7 @@ pub fn show_since(window: Duration, child_pid: Option<i32>) {
         return;
     }
 
-    eprintln!(
-        "sandkasten │ kernel denials ({} unique):",
-        counts.len()
-    );
+    eprintln!("sandkasten │ kernel denials ({} unique):", counts.len());
     // Sort by frequency (descending) then op+target.
     let mut entries: Vec<_> = counts.into_iter().collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -97,7 +98,10 @@ pub fn show_since(window: Duration, child_pid: Option<i32>) {
         eprintln!("    {count:>5}× {op:<24} {target_trunc}");
     }
     if entries.len() > MAX_ROWS {
-        eprintln!("    … {} more unique denial rows suppressed", entries.len() - MAX_ROWS);
+        eprintln!(
+            "    … {} more unique denial rows suppressed",
+            entries.len() - MAX_ROWS
+        );
     }
 }
 

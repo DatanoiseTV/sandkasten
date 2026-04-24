@@ -31,8 +31,16 @@ pub fn run_all() -> Vec<Finding> {
     #[cfg(target_os = "linux")]
     {
         out.push(check_proc("/proc/sys/kernel/unprivileged_userns_clone"));
-        out.push(check_tool("nft", "per-IP outbound filtering", install_hint_nft()));
-        out.push(check_tool("strace", "`sandkasten learn` on Linux", install_hint_strace()));
+        out.push(check_tool(
+            "nft",
+            "per-IP outbound filtering",
+            install_hint_nft(),
+        ));
+        out.push(check_tool(
+            "strace",
+            "`sandkasten learn` on Linux",
+            install_hint_strace(),
+        ));
         out.push(check_landlock());
     }
 
@@ -140,8 +148,10 @@ fn check_landlock() -> Finding {
         Finding {
             check: "Landlock LSM",
             status: Status::Missing,
-            hint: format!("syscall returned errno={} — kernel is older than 5.13 or Landlock not compiled in",
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)),
+            hint: format!(
+                "syscall returned errno={} — kernel is older than 5.13 or Landlock not compiled in",
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            ),
         }
     } else {
         Finding {
@@ -157,12 +167,16 @@ fn which_static(bin: &str) -> Option<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         for d in std::env::split_paths(&path) {
             let p = d.join(bin);
-            if p.is_file() { return Some(p); }
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     for fallback in ["/sbin", "/usr/sbin", "/usr/local/sbin"] {
         let p = std::path::Path::new(fallback).join(bin);
-        if p.is_file() { return Some(p); }
+        if p.is_file() {
+            return Some(p);
+        }
     }
     None
 }
@@ -189,11 +203,11 @@ fn distro_family() -> &'static str {
 fn install_hint_nft() -> String {
     match distro_family() {
         "debian" => "sudo apt-get install nftables".into(),
-        "rhel"   => "sudo dnf install nftables".into(),
-        "arch"   => "sudo pacman -S nftables".into(),
+        "rhel" => "sudo dnf install nftables".into(),
+        "arch" => "sudo pacman -S nftables".into(),
         "alpine" => "sudo apk add nftables".into(),
-        "suse"   => "sudo zypper install nftables".into(),
-        _        => "install the `nftables` package for your distro".into(),
+        "suse" => "sudo zypper install nftables".into(),
+        _ => "install the `nftables` package for your distro".into(),
     }
 }
 
@@ -201,11 +215,11 @@ fn install_hint_nft() -> String {
 fn install_hint_strace() -> String {
     match distro_family() {
         "debian" => "sudo apt-get install strace".into(),
-        "rhel"   => "sudo dnf install strace".into(),
-        "arch"   => "sudo pacman -S strace".into(),
+        "rhel" => "sudo dnf install strace".into(),
+        "arch" => "sudo pacman -S strace".into(),
         "alpine" => "sudo apk add strace".into(),
-        "suse"   => "sudo zypper install strace".into(),
-        _        => "install the `strace` package for your distro".into(),
+        "suse" => "sudo zypper install strace".into(),
+        _ => "install the `strace` package for your distro".into(),
     }
 }
 

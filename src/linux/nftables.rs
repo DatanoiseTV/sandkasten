@@ -97,9 +97,7 @@ fn render_ruleset(net: &Network) -> Result<String> {
     // rewritten packets are then evaluated by the allowlist.
     if !net.redirects.is_empty() {
         rules.push_str("    chain nat_output {\n");
-        rules.push_str(
-            "        type nat hook output priority -100;\n",
-        );
+        rules.push_str("        type nat hook output priority -100;\n");
         for r in &net.redirects {
             emit_redirect(&mut rules, r)?;
         }
@@ -156,8 +154,8 @@ fn render_ruleset(net: &Network) -> Result<String> {
 fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> {
     let from = crate::config::parse_endpoint(&r.from)
         .with_context(|| format!("redirect from {:?}", r.from))?;
-    let to = crate::config::parse_endpoint(&r.to)
-        .with_context(|| format!("redirect to {:?}", r.to))?;
+    let to =
+        crate::config::parse_endpoint(&r.to).with_context(|| format!("redirect to {:?}", r.to))?;
     let proto = r.protocol.as_deref().unwrap_or("tcp");
     if proto != "tcp" && proto != "udp" {
         return Err(anyhow!(
@@ -278,10 +276,14 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
             rules.push_str(&format!("        ip6 daddr {v6} {proto_port} accept\n"));
         }
         HostSpec::Ipv4Cidr(v4, mask) => {
-            rules.push_str(&format!("        ip daddr {v4}/{mask} {proto_port} accept\n"));
+            rules.push_str(&format!(
+                "        ip daddr {v4}/{mask} {proto_port} accept\n"
+            ));
         }
         HostSpec::Ipv6Cidr(v6, mask) => {
-            rules.push_str(&format!("        ip6 daddr {v6}/{mask} {proto_port} accept\n"));
+            rules.push_str(&format!(
+                "        ip6 daddr {v6}/{mask} {proto_port} accept\n"
+            ));
         }
         HostSpec::Name(n) => {
             // nftables does not resolve hostnames at rule-load time.
@@ -304,9 +306,7 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
                     }
                 }
                 Err(_) => {
-                    rules.push_str(&format!(
-                        "        # could not resolve {n} — rule skipped\n"
-                    ));
+                    rules.push_str(&format!("        # could not resolve {n} — rule skipped\n"));
                 }
             }
         }

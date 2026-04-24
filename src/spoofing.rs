@@ -129,17 +129,29 @@ pub fn plan(spoof: &Spoof) -> Vec<SynthFile> {
     if let Some(v) = &spoof.os_release {
         out.push(SynthFile {
             target_path: "/etc/os-release".into(),
-            content: if v.ends_with('\n') { v.clone() } else { format!("{v}\n") },
+            content: if v.ends_with('\n') {
+                v.clone()
+            } else {
+                format!("{v}\n")
+            },
         });
         out.push(SynthFile {
             target_path: "/usr/lib/os-release".into(),
-            content: if v.ends_with('\n') { v.clone() } else { format!("{v}\n") },
+            content: if v.ends_with('\n') {
+                v.clone()
+            } else {
+                format!("{v}\n")
+            },
         });
     }
     if let Some(v) = &spoof.issue {
         out.push(SynthFile {
             target_path: "/etc/issue".into(),
-            content: if v.ends_with('\n') { v.clone() } else { format!("{v}\n") },
+            content: if v.ends_with('\n') {
+                v.clone()
+            } else {
+                format!("{v}\n")
+            },
         });
     }
     if let Some(hex) = &spoof.hostid_hex {
@@ -189,7 +201,7 @@ fn render_cpuinfo(spoof: &Spoof) -> String {
         let _ = writeln!(s, "cpu cores\t: {cores}");
         s.push_str("fpu\t\t: yes\n");
         s.push_str("flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe\n");
-        s.push_str("\n");
+        s.push('\n');
     }
     s
 }

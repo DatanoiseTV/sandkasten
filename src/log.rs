@@ -3,12 +3,12 @@
 //! Levels:
 //!   * `Quiet`   — only hard errors via anyhow (printed by `main`).
 //!   * `Normal`  — default. Almost silent; prints only when sandkasten itself
-//!                 warns about something (e.g. profile widening).
+//!     warns about something (e.g. profile widening).
 //!   * `Info`    — `-v`. Lifecycle one-liners: profile loaded, sandbox applied,
-//!                 child PID, exit code.
+//!     child PID, exit code.
 //!   * `Debug`   — `-vv`. Adds a compact rule summary.
 //!   * `Trace`   — `-vvv`. Adds full generated policy and post-hoc kernel
-//!                 denial capture (macOS only, via `log show`).
+//!     denial capture (macOS only, via `log show`).
 
 use crate::config::Profile;
 use std::sync::atomic::{AtomicU8, Ordering};

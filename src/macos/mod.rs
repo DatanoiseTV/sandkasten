@@ -64,7 +64,10 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
         }
         eprintln!("─── end SBPL ─────────");
     }
-    crate::log::info(format_args!("applying sandbox ({} bytes SBPL)", policy.len()));
+    crate::log::info(format_args!(
+        "applying sandbox ({} bytes SBPL)",
+        policy.len()
+    ));
     let envp = build_envp(&profile.env)?;
     run_with_sbpl(&policy, argv, cwd, envp, &profile.limits)
 }
@@ -111,7 +114,14 @@ pub fn run_with_sbpl(
         return Err(std::io::Error::last_os_error()).context("fork");
     }
     if pid == 0 {
-        child_exec(policy, cwd_c.as_deref(), &prog, &argv_ptrs, &envp_ptrs, limits);
+        child_exec(
+            policy,
+            cwd_c.as_deref(),
+            &prog,
+            &argv_ptrs,
+            &envp_ptrs,
+            limits,
+        );
     }
 
     CHILD_PID.store(pid, Ordering::SeqCst);
@@ -184,7 +194,11 @@ fn child_exec(
 }
 
 /// Resolve `prog` via PATH (if it has no `/`), then execve with the given envp.
-fn exec_with_path(prog: &std::ffi::CStr, argv: &[*const libc::c_char], envp: &[*const libc::c_char]) -> ! {
+fn exec_with_path(
+    prog: &std::ffi::CStr,
+    argv: &[*const libc::c_char],
+    envp: &[*const libc::c_char],
+) -> ! {
     let prog_bytes = prog.to_bytes();
     if prog_bytes.contains(&b'/') {
         unsafe { libc::execve(prog.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
@@ -233,7 +247,9 @@ fn envp_get<'a>(envp: &'a [*const libc::c_char], key: &[u8]) -> Option<&'a [u8]>
         if s.len() > key.len() && s.starts_with(key) && s[key.len()] == b'=' {
             // SAFETY: we return a slice into the CStr's bytes, which live as long
             // as envp (which is held on the stack by the caller).
-            return Some(unsafe { std::slice::from_raw_parts(s.as_ptr().add(key.len() + 1), s.len() - key.len() - 1) });
+            return Some(unsafe {
+                std::slice::from_raw_parts(s.as_ptr().add(key.len() + 1), s.len() - key.len() - 1)
+            });
         }
     }
     None
@@ -281,7 +297,11 @@ pub(crate) fn build_envp(env: &crate::config::Env) -> Result<Vec<CString>> {
     let mut out: Vec<CString> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    let add = |out: &mut Vec<CString>, seen: &mut std::collections::BTreeSet<String>, k: &str, v: &str| -> Result<()> {
+    let add = |out: &mut Vec<CString>,
+               seen: &mut std::collections::BTreeSet<String>,
+               k: &str,
+               v: &str|
+     -> Result<()> {
         if seen.insert(k.to_string()) {
             out.push(CString::new(format!("{k}={v}")).context("env contains NUL")?);
         }

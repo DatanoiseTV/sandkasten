@@ -76,7 +76,7 @@ jobs:
           sysctl kernel.unprivileged_userns_clone 2>/dev/null || true
           sudo sh -c 'echo 1 > /proc/sys/kernel/unprivileged_userns_clone' 2>/dev/null || true
       - run: cargo build --release
-      - name: `sandkasten run` end-to-end
+      - name: "`sandkasten run` end-to-end"
         run: |
           target/release/sandkasten render self
           echo 'hello sandkasten' > /tmp/sk-test.txt

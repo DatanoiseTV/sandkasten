@@ -71,22 +71,18 @@ fn parse_line(line: &str) -> Option<Op> {
             first_quoted(rest).map(|p| Op::FileRead(PathBuf::from(p)))
         }
         "file-read-metadata" => first_quoted(rest).map(|p| Op::FileReadMeta(PathBuf::from(p))),
-        "file-write*"
-        | "file-write-data"
-        | "file-write-create"
-        | "file-write-unlink"
-        | "file-write-mode"
-        | "file-write-owner"
-        | "file-write-setugid"
-        | "file-write-times"
+        "file-write*" | "file-write-data" | "file-write-create" | "file-write-unlink"
+        | "file-write-mode" | "file-write-owner" | "file-write-setugid" | "file-write-times"
         | "file-write-xattr" => first_quoted(rest).map(|p| Op::FileWrite(PathBuf::from(p))),
         "mach-lookup" => first_quoted(rest).map(Op::MachLookup),
-        "network-outbound" => {
-            parse_network(rest).map(|(p, e)| Op::NetOutbound { proto: p, endpoint: e })
-        }
-        "network-bind" | "network-inbound" => {
-            parse_network(rest).map(|(p, e)| Op::NetBind { proto: p, endpoint: e })
-        }
+        "network-outbound" => parse_network(rest).map(|(p, e)| Op::NetOutbound {
+            proto: p,
+            endpoint: e,
+        }),
+        "network-bind" | "network-inbound" => parse_network(rest).map(|(p, e)| Op::NetBind {
+            proto: p,
+            endpoint: e,
+        }),
         "process-exec" | "process-exec*" => {
             first_quoted(rest).map(|p| Op::ProcessExec(PathBuf::from(p)))
         }

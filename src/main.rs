@@ -5,10 +5,7 @@
     clippy::semicolon_if_nothing_returned,
     rust_2018_idioms
 )]
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::module_name_repetitions
-)]
+#![allow(clippy::missing_errors_doc, clippy::module_name_repetitions)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use anyhow::{anyhow, Context, Result};
@@ -44,7 +41,8 @@ fn main() -> ExitCode {
     let args = cli::Cli::parse();
     log::set(log::from_flags(args.verbose, args.quiet));
     match run(args) {
-        Ok(code) => {
+        Ok(code) =>
+        {
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             ExitCode::from(code.clamp(0, 255) as u8)
         }
@@ -57,7 +55,13 @@ fn main() -> ExitCode {
 
 fn run(args: cli::Cli) -> Result<i32> {
     match args.command {
-        cli::Command::Run { profile, cwd, timeout, verify, argv } => {
+        cli::Command::Run {
+            profile,
+            cwd,
+            timeout,
+            verify,
+            argv,
+        } => {
             if verify {
                 // Verify only applies to on-disk profiles; built-ins ship inside
                 // the signed binary itself so are implicitly trusted.
@@ -132,8 +136,11 @@ fn run(args: cli::Cli) -> Result<i32> {
                 if prof.workspace.chdir && effective_cwd.is_none() {
                     effective_cwd = Some(ws.clone());
                 }
-                log::info(format_args!("workspace: {} (chdir={})",
-                    ws.display(), prof.workspace.chdir));
+                log::info(format_args!(
+                    "workspace: {} (chdir={})",
+                    ws.display(),
+                    prof.workspace.chdir
+                ));
             }
 
             log::info(format_args!(
@@ -156,8 +163,7 @@ fn run(args: cli::Cli) -> Result<i32> {
             if path.exists() {
                 return Err(anyhow!("refusing to overwrite {}", path.display()));
             }
-            std::fs::write(&path, body)
-                .with_context(|| format!("writing {}", path.display()))?;
+            std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
             eprintln!("wrote {} (template: {template})", path.display());
             Ok(0)
         }
@@ -203,7 +209,12 @@ fn run(args: cli::Cli) -> Result<i32> {
             ui::run(port, !no_open)?;
             Ok(0)
         }
-        cli::Command::Wrap { profile, timeout, cwd, argv } => {
+        cli::Command::Wrap {
+            profile,
+            timeout,
+            cwd,
+            argv,
+        } => {
             // Delegate to the Run path with the chosen profile (defaulting
             // to `self`).
             run(cli::Cli {
@@ -218,7 +229,11 @@ fn run(args: cli::Cli) -> Result<i32> {
                 quiet: args.quiet,
             })
         }
-        cli::Command::Shell { profile, shell, cwd } => {
+        cli::Command::Shell {
+            profile,
+            shell,
+            cwd,
+        } => {
             let raw = config::load(&profile)?;
             let ctx = config::ExpandContext::detect(None)?;
             let mut prof = config::finalize(raw, &ctx)?;
@@ -233,7 +248,9 @@ fn run(args: cli::Cli) -> Result<i32> {
             // Materialise mocks + workspace like `run` does.
             let mock_handle = mocks::materialise(&mut prof)?;
             if let Some(m) = &mock_handle {
-                prof.env.set.insert(m.env_var.0.clone(), m.env_var.1.clone());
+                prof.env
+                    .set
+                    .insert(m.env_var.0.clone(), m.env_var.1.clone());
             }
             let mut effective_cwd = cwd;
             if let Some(ws_path) = prof.workspace.path.clone() {
@@ -272,9 +289,13 @@ fn run(args: cli::Cli) -> Result<i32> {
             // Materialise mocks + workspace identically to `run`/`shell`.
             let mock_handle = mocks::materialise(&mut prof)?;
             if let Some(m) = &mock_handle {
-                prof.env.set.insert(m.env_var.0.clone(), m.env_var.1.clone());
+                prof.env
+                    .set
+                    .insert(m.env_var.0.clone(), m.env_var.1.clone());
                 // SAFETY: pre-fork, single-threaded.
-                unsafe { std::env::set_var(&m.env_var.0, &m.env_var.1); }
+                unsafe {
+                    std::env::set_var(&m.env_var.0, &m.env_var.1);
+                }
             }
             prof.env.set.insert(
                 "SANDKASTEN_PROFILE".into(),
@@ -300,12 +321,16 @@ fn run(args: cli::Cli) -> Result<i32> {
             // Otherwise the user got an interactive login; spawn their shell.
             let argv: Vec<String> = match std::env::var("SSH_ORIGINAL_COMMAND") {
                 Ok(cmd) if !cmd.trim().is_empty() => {
-                    log::info(format_args!("sshd: running forced command under profile {profile:?}"));
+                    log::info(format_args!(
+                        "sshd: running forced command under profile {profile:?}"
+                    ));
                     vec!["/bin/sh".into(), "-c".into(), cmd]
                 }
                 _ => {
                     let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-                    log::info(format_args!("sshd: interactive shell {sh} under profile {profile:?}"));
+                    log::info(format_args!(
+                        "sshd: interactive shell {sh} under profile {profile:?}"
+                    ));
                     vec![sh, "-l".into()]
                 }
             };
@@ -508,7 +533,11 @@ fn parse_duration_seconds(s: &str) -> Result<u64> {
 
 fn print_info() {
     println!("sandkasten {}", env!("CARGO_PKG_VERSION"));
-    println!("  platform: {}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "  platform: {}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     let conf = dirs::config_dir().map(|p| p.join("sandkasten"));
     if let Some(c) = &conf {
         println!("  config dir:    {}", c.display());
@@ -526,9 +555,7 @@ fn print_info() {
         if let Ok(rd) = std::fs::read_dir(&profdir) {
             let count = rd
                 .flatten()
-                .filter(|e| {
-                    e.path().extension().and_then(|s| s.to_str()) == Some("toml")
-                })
+                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("toml"))
                 .count();
             println!("\n  user profiles installed: {count}");
         }

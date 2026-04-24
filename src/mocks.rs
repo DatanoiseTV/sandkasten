@@ -65,7 +65,11 @@ pub fn materialise(profile: &mut Profile) -> Result<Option<Materialised>> {
     // live as plain files in the mocks dir. The Linux child reads them back
     // by asking `spoofing::plan(...)` again for the list (deterministic).
     for sf in &synth_spoofs {
-        let base = sf.target_path.replace('/', "_").trim_start_matches('_').to_string();
+        let base = sf
+            .target_path
+            .replace('/', "_")
+            .trim_start_matches('_')
+            .to_string();
         std::fs::write(dir.join(&base), &sf.content)
             .with_context(|| format!("writing spoof file for {}", sf.target_path))?;
     }

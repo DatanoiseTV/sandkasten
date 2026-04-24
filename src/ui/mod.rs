@@ -81,16 +81,24 @@ fn handle(state: &AppState, mut req: tiny_http::Request) -> Result<()> {
             Ok(())
         }
         (Method::Get, "/api/profiles") => {
-            let req = match check_auth(req) { Ok(r) => r, Err(()) => return Ok(()) };
+            let req = match check_auth(req) {
+                Ok(r) => r,
+                Err(()) => return Ok(()),
+            };
             let body = list_profiles_json(&state.dir);
             req.respond(json_response(200, body.as_bytes()))?;
             Ok(())
         }
         (Method::Get, "/api/templates") => {
-            let req = match check_auth(req) { Ok(r) => r, Err(()) => return Ok(()) };
+            let req = match check_auth(req) {
+                Ok(r) => r,
+                Err(()) => return Ok(()),
+            };
             let mut body = String::from("[");
             for (i, (name, desc)) in crate::templates::LIST.iter().enumerate() {
-                if i > 0 { body.push(','); }
+                if i > 0 {
+                    body.push(',');
+                }
                 body.push_str(&format!(
                     "{{\"name\":{},\"description\":{},\"raw\":{}}}",
                     json_string(name),
@@ -103,11 +111,18 @@ fn handle(state: &AppState, mut req: tiny_http::Request) -> Result<()> {
             Ok(())
         }
         (Method::Get, p) if p.starts_with("/api/profiles/") => {
-            let req = match check_auth(req) { Ok(r) => r, Err(()) => return Ok(()) };
+            let req = match check_auth(req) {
+                Ok(r) => r,
+                Err(()) => return Ok(()),
+            };
             let name = &p["/api/profiles/".len()..];
             match read_profile(&state.dir, name) {
                 Ok(raw) => {
-                    let body = format!("{{\"name\":{},\"raw\":{}}}", json_string(name), json_string(&raw));
+                    let body = format!(
+                        "{{\"name\":{},\"raw\":{}}}",
+                        json_string(name),
+                        json_string(&raw)
+                    );
                     req.respond(json_response(200, body.as_bytes()))?;
                 }
                 Err(e) => {
@@ -148,7 +163,9 @@ fn handle(state: &AppState, mut req: tiny_http::Request) -> Result<()> {
             let mut buf = [0u8; 4096];
             loop {
                 let n = std::io::Read::read(req.as_reader(), &mut buf)?;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 body.extend_from_slice(&buf[..n]);
                 if body.len() > MAX_BODY_BYTES {
                     req.respond(json_response(413, b"{\"error\":\"body too large\"}"))?;
@@ -166,7 +183,10 @@ fn handle(state: &AppState, mut req: tiny_http::Request) -> Result<()> {
             Ok(())
         }
         (Method::Delete, p) if p.starts_with("/api/profiles/") => {
-            let req = match check_auth(req) { Ok(r) => r, Err(()) => return Ok(()) };
+            let req = match check_auth(req) {
+                Ok(r) => r,
+                Err(()) => return Ok(()),
+            };
             if !origin_allowed(&req, &state.bound) {
                 req.respond(json_response(
                     403,
@@ -216,9 +236,10 @@ fn require_auth(state: &AppState, req: &tiny_http::Request, query: &str) -> Resu
         .map(|h| h.value.as_str().to_string())
         .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string));
 
-    let query_token = parse_query(query).into_iter().find_map(
-        |(k, v)| if k == "t" { Some(v) } else { None },
-    );
+    let query_token =
+        parse_query(query)
+            .into_iter()
+            .find_map(|(k, v)| if k == "t" { Some(v) } else { None });
 
     let given = header_token.or(query_token).unwrap_or_default();
     if given == state.token {
@@ -412,9 +433,7 @@ fn json_string(s: &str) -> String {
     out
 }
 
-fn security_headers(
-    r: Response<std::io::Cursor<Vec<u8>>>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+fn security_headers(r: Response<std::io::Cursor<Vec<u8>>>) -> Response<std::io::Cursor<Vec<u8>>> {
     // Tight CSP for an app that only talks to itself. `'unsafe-inline'` on
     // script/style is required because the whole SPA ships as inline in
     // `index.html`; mitigated by default-src 'none' and strict form-action.
@@ -446,8 +465,11 @@ fn json_response(status: u16, body: &[u8]) -> Response<std::io::Cursor<Vec<u8>>>
         Response::from_data(body.to_vec())
             .with_status_code(StatusCode(status))
             .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..])
-                    .unwrap(),
+                Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"application/json; charset=utf-8"[..],
+                )
+                .unwrap(),
             ),
     )
 }
@@ -457,8 +479,7 @@ fn html_response(status: u16, body: &[u8]) -> Response<std::io::Cursor<Vec<u8>>>
         Response::from_data(body.to_vec())
             .with_status_code(StatusCode(status))
             .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-                    .unwrap(),
+                Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap(),
             ),
     )
 }

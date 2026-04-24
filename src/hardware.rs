@@ -4,12 +4,24 @@
 use crate::config::Profile;
 
 pub fn expand(p: &mut Profile) {
-    if p.hardware.usb            { apply_usb(p); }
-    if p.hardware.serial         { apply_serial(p); }
-    if p.hardware.audio          { apply_audio(p); }
-    if p.hardware.gpu            { apply_gpu(p); }
-    if p.hardware.camera         { apply_camera(p); }
-    if p.hardware.screen_capture { apply_screen_capture(p); }
+    if p.hardware.usb {
+        apply_usb(p);
+    }
+    if p.hardware.serial {
+        apply_serial(p);
+    }
+    if p.hardware.audio {
+        apply_audio(p);
+    }
+    if p.hardware.gpu {
+        apply_gpu(p);
+    }
+    if p.hardware.camera {
+        apply_camera(p);
+    }
+    if p.hardware.screen_capture {
+        apply_screen_capture(p);
+    }
     apply_video_controls(p);
 }
 
@@ -115,8 +127,12 @@ fn apply_audio(p: &mut Profile) {
         add_r(p, "/proc/asound");
 
         // Client-side config.
-        for home_rel in [".config/pulse", ".config/pipewire",
-                         ".config/alsa", ".asoundrc"] {
+        for home_rel in [
+            ".config/pulse",
+            ".config/pipewire",
+            ".config/alsa",
+            ".asoundrc",
+        ] {
             if let Some(h) = dirs::home_dir() {
                 let full = h.join(home_rel);
                 let s = full.to_string_lossy().into_owned();
@@ -216,13 +232,7 @@ fn apply_video_controls(p: &mut Profile) {
     use crate::config::Rewire;
 
     // Redirects become rewire entries.
-    let redirects: Vec<(String, String)> = p
-        .hardware
-        .video
-        .redirect
-        .clone()
-        .into_iter()
-        .collect();
+    let redirects: Vec<(String, String)> = p.hardware.video.redirect.clone().into_iter().collect();
     for (from, to) in redirects {
         if !p.filesystem.rewire.iter().any(|r| r.from == from) {
             p.filesystem.rewire.push(Rewire { from, to });

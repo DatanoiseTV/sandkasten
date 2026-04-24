@@ -3,7 +3,6 @@
 use crate::config::Profile;
 use anyhow::{anyhow, Context, Result};
 use nix::sched::{unshare, CloneFlags};
-use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{execve, fork, ForkResult, Pid};
 use std::ffi::CString;
@@ -38,8 +37,7 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
     // user with `ip netns add vpn; ip netns exec vpn wg-quick up wg0`).
     if let Some(path) = profile.network.netns_path.as_deref() {
         use std::os::fd::AsRawFd;
-        let f = std::fs::File::open(path)
-            .with_context(|| format!("opening netns {path}"))?;
+        let f = std::fs::File::open(path).with_context(|| format!("opening netns {path}"))?;
         // SAFETY: setns with a valid netns fd and CLONE_NEWNET.
         let rc = unsafe { libc::setns(f.as_raw_fd(), libc::CLONE_NEWNET) };
         if rc != 0 {
@@ -271,26 +269,26 @@ fn drop_caps() {
     // From <linux/capability.h>. Listed explicitly instead of a loop so
     // each drop's intent is visible.
     const CAPS: &[libc::c_int] = &[
-        21,  // CAP_SYS_ADMIN — the most dangerous; we already deny mount/unshare/setns via seccomp
-        22,  // CAP_SYS_BOOT
-        23,  // CAP_SYS_NICE
-        24,  // CAP_SYS_RESOURCE
-        25,  // CAP_SYS_TIME
-        26,  // CAP_SYS_TTY_CONFIG
-        27,  // CAP_MKNOD
-        28,  // CAP_LEASE
-        29,  // CAP_AUDIT_WRITE
-        30,  // CAP_AUDIT_CONTROL
-        31,  // CAP_SETFCAP
-        32,  // CAP_MAC_OVERRIDE
-        33,  // CAP_MAC_ADMIN
-        34,  // CAP_SYSLOG
-        35,  // CAP_WAKE_ALARM
-        36,  // CAP_BLOCK_SUSPEND
-        37,  // CAP_AUDIT_READ
-        38,  // CAP_PERFMON
-        39,  // CAP_BPF
-        40,  // CAP_CHECKPOINT_RESTORE
+        21, // CAP_SYS_ADMIN — the most dangerous; we already deny mount/unshare/setns via seccomp
+        22, // CAP_SYS_BOOT
+        23, // CAP_SYS_NICE
+        24, // CAP_SYS_RESOURCE
+        25, // CAP_SYS_TIME
+        26, // CAP_SYS_TTY_CONFIG
+        27, // CAP_MKNOD
+        28, // CAP_LEASE
+        29, // CAP_AUDIT_WRITE
+        30, // CAP_AUDIT_CONTROL
+        31, // CAP_SETFCAP
+        32, // CAP_MAC_OVERRIDE
+        33, // CAP_MAC_ADMIN
+        34, // CAP_SYSLOG
+        35, // CAP_WAKE_ALARM
+        36, // CAP_BLOCK_SUSPEND
+        37, // CAP_AUDIT_READ
+        38, // CAP_PERFMON
+        39, // CAP_BPF
+        40, // CAP_CHECKPOINT_RESTORE
     ];
     for &cap in CAPS {
         // SAFETY: prctl with fixed integer arguments. Ignores EINVAL for
@@ -322,8 +320,7 @@ fn bind_overlay_netfiles(profile: &crate::config::Profile) -> Result<()> {
     }
     if needs_hosts {
         let src = mock_dir.join("hosts");
-        bind_over(&src, std::path::Path::new("/etc/hosts"))
-            .context("bind-mount /etc/hosts")?;
+        bind_over(&src, std::path::Path::new("/etc/hosts")).context("bind-mount /etc/hosts")?;
     }
     Ok(())
 }
@@ -374,12 +371,8 @@ fn apply_overlayfs(profile: &crate::config::Profile) -> Result<()> {
     let work = std::path::Path::new(upper)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("/tmp"))
-        .join(format!(
-            ".sandkasten-ovl-work-{}",
-            std::process::id()
-        ));
-    std::fs::create_dir_all(&work)
-        .with_context(|| format!("mkdir {}", work.display()))?;
+        .join(format!(".sandkasten-ovl-work-{}", std::process::id()));
+    std::fs::create_dir_all(&work).with_context(|| format!("mkdir {}", work.display()))?;
 
     let opts = format!(
         "lowerdir={lower},upperdir={upper},workdir={}",
@@ -557,5 +550,8 @@ fn resolve_program(prog: &CString, envp: &[CString]) -> Result<CString> {
             return CString::new(candidate).context("resolved path NUL");
         }
     }
-    Err(anyhow!("{} not found in PATH", String::from_utf8_lossy(bytes)))
+    Err(anyhow!(
+        "{} not found in PATH",
+        String::from_utf8_lossy(bytes)
+    ))
 }

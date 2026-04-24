@@ -51,9 +51,7 @@ impl Prepared {
                     // skipped at default verbosity — cross-platform templates
                     // naturally include macOS-only entries on Linux and vice
                     // versa. Debug level surfaces them for diagnostics.
-                    crate::log::debug(format_args!(
-                        "landlock: skipping read path {path:?}: {e}"
-                    ));
+                    crate::log::debug(format_args!("landlock: skipping read path {path:?}: {e}"));
                 }
             }
         }
@@ -65,14 +63,14 @@ impl Prepared {
                         .with_context(|| format!("landlock add_rule rw {path}"))?;
                 }
                 Err(e) => {
-                    crate::log::debug(format_args!(
-                        "landlock: skipping rw path {path:?}: {e}"
-                    ));
+                    crate::log::debug(format_args!("landlock: skipping rw path {path:?}: {e}"));
                 }
             }
         }
 
-        Ok(Self { created: Some(created) })
+        Ok(Self {
+            created: Some(created),
+        })
     }
 
     pub fn apply(self) -> Result<()> {
@@ -111,7 +109,11 @@ fn prune(fs: &crate::config::Filesystem) -> (Vec<String>, Vec<String>) {
             eprintln!(
                 "sandkasten: WARNING — Linux cannot deny {:?} inside allowed read subtree {:?}; \
                  use narrower allow paths instead.",
-                fs.deny.iter().find(|d| p.starts_with(p)).unwrap_or(&String::new()),
+                fs.deny
+                    .iter()
+                    .find(|d| is_ancestor(p, d))
+                    .map(String::as_str)
+                    .unwrap_or(""),
                 p
             );
         }

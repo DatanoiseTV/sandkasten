@@ -32,7 +32,10 @@ pub fn run(argv: &[String], cwd: Option<&Path>, opts: Options) -> Result<i32> {
     let log_path = temp_path("sandkasten-strace", "log")?;
 
     eprintln!("── sandkasten learn ─────────────────────────────────────────────");
-    eprintln!(" recording operations via strace to  {}", log_path.display());
+    eprintln!(
+        " recording operations via strace to  {}",
+        log_path.display()
+    );
     eprintln!(" the target runs WITH FULL PERMISSIONS during this capture.");
     eprintln!("─────────────────────────────────────────────────────────────────\n");
 
@@ -101,11 +104,12 @@ fn parse_strace_line(raw: &str) -> Option<Op> {
         .find(|(_, c)| !c.is_ascii_digit())
         .map(|(i, _)| i)
         .unwrap_or(0);
-    let line = if first_digit_nondigit > 0 && line.as_bytes().get(first_digit_nondigit) == Some(&b' ') {
-        &line[first_digit_nondigit + 1..]
-    } else {
-        line
-    };
+    let line =
+        if first_digit_nondigit > 0 && line.as_bytes().get(first_digit_nondigit) == Some(&b' ') {
+            &line[first_digit_nondigit + 1..]
+        } else {
+            line
+        };
 
     // skip continuation/resume markers
     if line.contains("<unfinished ...>") || line.contains("resumed>") {
@@ -132,34 +136,38 @@ fn parse_strace_line(raw: &str) -> Option<Op> {
 
     match sys {
         // File reads
-        "openat" | "open" | "access" | "faccessat" | "faccessat2" | "stat"
-        | "lstat" | "fstatat" | "newfstatat" | "readlink" | "readlinkat"
-        | "getxattr" | "lgetxattr" | "statx" => {
-            first_quoted_arg(args).map(|p| {
-                let is_write = sys == "openat" && args.contains("O_WRONLY")
-                    || sys == "openat" && args.contains("O_RDWR")
-                    || sys == "openat" && args.contains("O_CREAT")
-                    || sys == "open" && args.contains("O_WRONLY")
-                    || sys == "open" && args.contains("O_RDWR")
-                    || sys == "open" && args.contains("O_CREAT");
-                if is_write {
-                    Op::FileWrite(PathBuf::from(p))
-                } else if matches!(
-                    sys,
-                    "stat" | "lstat" | "fstatat" | "newfstatat" | "statx" | "access" | "faccessat" | "faccessat2"
-                ) {
-                    Op::FileReadMeta(PathBuf::from(p))
-                } else {
-                    Op::FileRead(PathBuf::from(p))
-                }
-            })
-        }
+        "openat" | "open" | "access" | "faccessat" | "faccessat2" | "stat" | "lstat"
+        | "fstatat" | "newfstatat" | "readlink" | "readlinkat" | "getxattr" | "lgetxattr"
+        | "statx" => first_quoted_arg(args).map(|p| {
+            let is_write = sys == "openat" && args.contains("O_WRONLY")
+                || sys == "openat" && args.contains("O_RDWR")
+                || sys == "openat" && args.contains("O_CREAT")
+                || sys == "open" && args.contains("O_WRONLY")
+                || sys == "open" && args.contains("O_RDWR")
+                || sys == "open" && args.contains("O_CREAT");
+            if is_write {
+                Op::FileWrite(PathBuf::from(p))
+            } else if matches!(
+                sys,
+                "stat"
+                    | "lstat"
+                    | "fstatat"
+                    | "newfstatat"
+                    | "statx"
+                    | "access"
+                    | "faccessat"
+                    | "faccessat2"
+            ) {
+                Op::FileReadMeta(PathBuf::from(p))
+            } else {
+                Op::FileRead(PathBuf::from(p))
+            }
+        }),
 
         // File writes / mutations
-        "creat" | "mkdir" | "mkdirat" | "unlink" | "unlinkat" | "rename"
-        | "renameat" | "renameat2" | "chmod" | "fchmodat" | "chown"
-        | "lchown" | "fchownat" | "utime" | "utimes" | "utimensat"
-        | "setxattr" | "lsetxattr" | "removexattr" | "lremovexattr"
+        "creat" | "mkdir" | "mkdirat" | "unlink" | "unlinkat" | "rename" | "renameat"
+        | "renameat2" | "chmod" | "fchmodat" | "chown" | "lchown" | "fchownat" | "utime"
+        | "utimes" | "utimensat" | "setxattr" | "lsetxattr" | "removexattr" | "lremovexattr"
         | "truncate" | "link" | "linkat" | "symlink" | "symlinkat" => {
             first_quoted_arg(args).map(|p| Op::FileWrite(PathBuf::from(p)))
         }
@@ -220,14 +228,22 @@ fn parse_sockaddr(args: &str) -> Option<(String, String)> {
     };
 
     // Port
-    let port_marker = if is_v6 { "sin6_port=htons(" } else { "sin_port=htons(" };
+    let port_marker = if is_v6 {
+        "sin6_port=htons("
+    } else {
+        "sin_port=htons("
+    };
     let p_idx = args.find(port_marker)?;
     let after = &args[p_idx + port_marker.len()..];
     let end = after.find(')')?;
     let port: u16 = after[..end].parse().ok()?;
 
     // Addr
-    let addr_marker = if is_v6 { "inet_pton(\"" } else { "inet_addr(\"" };
+    let addr_marker = if is_v6 {
+        "inet_pton(\""
+    } else {
+        "inet_addr(\""
+    };
     let a_idx = args.find(addr_marker)?;
     let after = &args[a_idx + addr_marker.len()..];
     let aend = after.find('"')?;
