@@ -409,6 +409,16 @@ pub struct Network {
     #[serde(default)]
     pub hosts_entries: std::collections::BTreeMap<String, String>,
 
+    /// Force the sandbox through an outbound HTTP(S) proxy. Sets
+    /// `HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` / `https_proxy` /
+    /// `ALL_PROXY` / `NO_PROXY` env vars, and optionally restricts
+    /// `outbound_tcp` to only the proxy's `host:port` when the existing
+    /// list is empty. Use with a user-provided MITM proxy
+    /// (mitmproxy / squid / custom) to enforce HTTP method + URL rules.
+    /// Kernel-level L7 filtering is out of scope for a sandbox.
+    #[serde(default)]
+    pub proxy: Proxy,
+
     /// Outbound IP/port redirects (Linux only). Traffic to `from` is DNAT'd
     /// to `to` inside the netns via nftables. For hostname-based redirects
     /// prefer `hosts_entries` — those work on both platforms and survive
@@ -441,6 +451,25 @@ pub struct Block {
     pub port: Option<String>,
     #[serde(default)]
     pub protocol: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Proxy {
+    /// Proxy URL — e.g. `http://127.0.0.1:8080` or
+    /// `socks5://127.0.0.1:1080`. Empty = disabled.
+    pub url: Option<String>,
+
+    /// Hosts / CIDRs the sandbox is allowed to reach directly (not via
+    /// the proxy). Rendered into `NO_PROXY`.
+    #[serde(default)]
+    pub bypass: Vec<String>,
+
+    /// If true (default), automatically extract host:port from `url`
+    /// and add it to `outbound_tcp` — so no other destinations can be
+    /// reached without going through the proxy.
+    #[serde(default = "default_true")]
+    pub restrict_outbound: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -719,6 +748,16 @@ impl Profile {
         }
         out.network.redirects.extend(self.network.redirects);
         out.network.blocks.extend(self.network.blocks);
+        // Proxy settings: child scalars win.
+        if self.network.proxy.url.is_some() {
+            out.network.proxy.url = self.network.proxy.url;
+        }
+        extend(&mut out.network.proxy.bypass, self.network.proxy.bypass);
+        // Child wins unconditionally — the parent's Default::default() for
+        // Proxy gives `false` for restrict_outbound regardless of serde's
+        // `default_true` attribute, so AND-merging would defeat the user's
+        // explicit value.
+        out.network.proxy.restrict_outbound = self.network.proxy.restrict_outbound;
 
         // Process: allows are additive — either parent or child granting
         // the permission results in it being granted. Templates can only
@@ -1131,8 +1170,62 @@ pub fn finalize(mut p: Profile, ctx: &ExpandContext) -> Result<Profile> {
         }
     }
 
+    // Network proxy: set env vars + optionally narrow outbound_tcp.
+    apply_proxy(&mut p);
+
     p.validate()?;
     Ok(p)
+}
+
+fn apply_proxy(p: &mut Profile) {
+    let Some(url) = p.network.proxy.url.clone() else {
+        return;
+    };
+    for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                "http_proxy", "https_proxy", "all_proxy"]
+    {
+        p.env.set.entry(var.into()).or_insert_with(|| url.clone());
+    }
+    if !p.network.proxy.bypass.is_empty() {
+        let joined = p.network.proxy.bypass.join(",");
+        p.env
+            .set
+            .entry("NO_PROXY".into())
+            .or_insert_with(|| joined.clone());
+        p.env
+            .set
+            .entry("no_proxy".into())
+            .or_insert(joined);
+    }
+    // Restrict outbound to the proxy's host:port (and DNS + the explicit
+    // proxy bypass entries) when the user hasn't listed other destinations.
+    if p.network.proxy.restrict_outbound && p.network.outbound_tcp.is_empty() {
+        if let Some(hostport) = host_port_from_url(&url) {
+            p.network.outbound_tcp.push(hostport);
+        }
+        for b in p.network.proxy.bypass.clone() {
+            p.network.outbound_tcp.push(format!("{b}:*"));
+        }
+    }
+}
+
+fn host_port_from_url(u: &str) -> Option<String> {
+    // Cheap parser — no url crate dep.
+    //  scheme://host[:port][/...]
+    let after = u.splitn(2, "://").nth(1)?;
+    let host_part = after.split(['/', '?', '#']).next()?;
+    if host_part.contains(':') {
+        Some(host_part.to_string())
+    } else {
+        // Default ports per scheme.
+        let port = match u.split("://").next().unwrap_or("") {
+            "http" => 80,
+            "https" => 443,
+            "socks5" | "socks5h" => 1080,
+            _ => return None,
+        };
+        Some(format!("{host_part}:{port}"))
+    }
 }
 
 #[cfg(test)]
