@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.2 — 2026-04-24
+
+One-line follow-up to v0.2.1: `allow_unix_sockets` now also grants
+`network-outbound` on the Unix-domain socket paths
+(`/var/run`, `/private/var/run`, `/tmp`, `/private/tmp`), not just
+`system-socket` + `network-bind`. Without that outbound grant,
+`getaddrinfo(3)` on macOS silently returns EAI_NONAME — which made
+`curl https://x.example` fail under `network-client` even though
+everything else (UDP:53, mDNSResponder mach services, filesystem
+reads) was in place. `dig` and `host` were unaffected because they
+use libresolv directly rather than going through mDNSResponder's
+Unix socket.
+
 ## v0.2.1 — 2026-04-24
 
 Dogfood pass on macOS surfaced three template-level bugs. All fixed here

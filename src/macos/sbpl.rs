@@ -211,13 +211,22 @@ pub fn generate_for_target(p: &Profile, target: Option<&str>) -> String {
         }
         if p.network.allow_unix_sockets {
             // AF_UNIX bind and connect. Chromium, Electron, VS Code,
-            // Docker-for-Mac, gpg-agent etc. all need this. The precise
-            // Seatbelt filter for unix sockets varies by macOS version, so
-            // we grant the socket() syscall itself and broad local bind;
-            // the filesystem layer still gates which paths the socket
-            // file may be created at.
+            // Docker-for-Mac, gpg-agent, and — crucially — macOS's own
+            // getaddrinfo(3) all need this. The resolver talks to
+            // mDNSResponder over a Unix-domain socket at
+            // /var/run/mDNSResponder (and its /private/var/run/... real
+            // path); without an outbound allowance on those paths,
+            // DNS-via-libsystem silently returns EAI_NONAME even with
+            // UDP:53 open and the DNS mach services granted.
             s.push_str("(allow system-socket)\n");
             s.push_str("(allow network-bind)\n");
+            s.push_str(
+                "(allow network-outbound \
+                 (subpath \"/var/run\") \
+                 (subpath \"/private/var/run\") \
+                 (subpath \"/tmp\") \
+                 (subpath \"/private/tmp\"))\n",
+            );
         }
 
         // SCTP / DCCP / UDPLite: Seatbelt's per-protocol filter syntax is
