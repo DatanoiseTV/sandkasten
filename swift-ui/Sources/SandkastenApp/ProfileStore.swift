@@ -194,18 +194,30 @@ final class ProfileStore: ObservableObject {
 
         let raw = loadRaw(for: entry) ?? "# profile not found"
         rawToml = raw
-        reparseFromRaw()
+        DebugLog.line("open", "\(entry.kind == .user ? "user" : "builtin"):\(entry.name) (\(raw.count) bytes)")
+        reparseFromRaw(context: entry.name)
         refreshExplanation(for: entry)
         isDirty = false
         statusLine = "Loaded \(entry.name)"
     }
 
-    func reparseFromRaw() {
+    func reparseFromRaw(context: String = "<unknown>") {
         do {
             profile = try Profile.parse(rawToml)
             parseError = nil
+            if profile.parseWarnings.isEmpty {
+                DebugLog.line("parse", "\(context): ok")
+            } else {
+                DebugLog.line("parse", "\(context): ok with \(profile.parseWarnings.count) section warning(s)")
+                for w in profile.parseWarnings {
+                    DebugLog.line("parse-warn", "  \(w)")
+                }
+                DebugLog.block("parse-warn", "raw TOML that produced the warnings (\(context))", rawToml)
+            }
         } catch {
             parseError = "TOML parse: \(error.localizedDescription)"
+            DebugLog.line("parse", "\(context): FAILED — \(error.localizedDescription)")
+            DebugLog.block("parse-fail", "raw TOML that failed to parse (\(context))", rawToml)
             // leave `profile` as it was; form stays editable with the last good value
         }
     }
@@ -244,6 +256,7 @@ final class ProfileStore: ObservableObject {
             parseError = nil
         } catch {
             parseError = "TOML encode: \(error.localizedDescription)"
+            DebugLog.line("encode-fail", "\(error.localizedDescription)")
         }
     }
 

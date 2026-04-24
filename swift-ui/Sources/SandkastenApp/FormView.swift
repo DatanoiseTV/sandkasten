@@ -28,6 +28,9 @@ struct FormView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
+                // Banners live OUTSIDE the `.disabled(readonly)` scope so
+                // their Copy / Open-log buttons stay interactive even
+                // while the form fields below are locked.
                 if let err = store.parseError {
                     TomlParseError(message: err)
                 }
@@ -35,21 +38,23 @@ struct FormView: View {
                     TomlParseWarnings(messages: store.profile.parseWarnings)
                 }
 
-                IdentitySection()
-                FilesystemSection()
-                NetworkSection()
-                ProcessSystemEnvSection()
-                LimitsSection()
-                HardwareSection()
-                SpoofSection()
-                WorkspaceOverlayMocksSection()
+                Group {
+                    IdentitySection()
+                    FilesystemSection()
+                    NetworkSection()
+                    ProcessSystemEnvSection()
+                    LimitsSection()
+                    HardwareSection()
+                    SpoofSection()
+                    WorkspaceOverlayMocksSection()
+                }
+                .disabled(readonly)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
-            .frame(maxWidth: 920, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .disabled(readonly)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
     }
 }
@@ -89,7 +94,7 @@ private struct TomlParseWarnings: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(.yellow)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Some sections couldn't be parsed — they've been reset to defaults. The rest of the profile loaded fine.")
                     .font(.callout.weight(.medium))
                 ForEach(messages, id: \.self) { m in
@@ -98,6 +103,25 @@ private struct TomlParseWarnings: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+                HStack(spacing: 12) {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(messages.joined(separator: "\n"),
+                                                        forType: .string)
+                    } label: { Label("Copy warnings", systemImage: "doc.on.doc") }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: "/tmp/sandkasten-ui.log"))
+                    } label: { Label("Open debug log", systemImage: "doc.text.magnifyingglass") }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Text("/tmp/sandkasten-ui.log")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+                .padding(.top, 4)
             }
         }
         .padding(12)

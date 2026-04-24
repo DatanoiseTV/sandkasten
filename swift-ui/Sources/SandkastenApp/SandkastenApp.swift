@@ -46,6 +46,7 @@ struct SandkastenApp: App {
 /// window close → app-quits, app-terminated-on-last-window.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DebugLog.boot()
         // Show in Dock + Cmd-Tab, not as a menu-bar-only background helper.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
