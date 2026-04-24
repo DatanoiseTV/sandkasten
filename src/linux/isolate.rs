@@ -13,6 +13,16 @@ use std::path::Path;
 pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32> {
     let net = super::net_mode(profile);
 
+    // Outbound-only profile + pasta available + we haven't been spawned
+    // by pasta already → re-exec ourselves under pasta, which creates
+    // a netns with working external connectivity plumbed via userspace.
+    // This restores per-IP nftables filtering (applied inside pasta's
+    // netns, where kernel rules don't affect the host) without giving
+    // up OOB "internet just works" UX.
+    if matches!(net.kind, super::NetKind::PastaWrap) && !super::already_in_pasta() {
+        return super::exec_under_pasta(&net, argv, cwd);
+    }
+
     // Stage 1: enter user namespace. Other namespaces unshared together so
     // uid_map writes happen exactly once.
     let uid = nix::unistd::geteuid().as_raw();
@@ -23,7 +33,10 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
         | CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWIPC
         | CloneFlags::CLONE_NEWUTS;
-    if net.unshare_net {
+    // When pasta already put us in a private netns, skip CLONE_NEWNET —
+    // we want to inherit the pasta-plumbed netns, not unshare into a
+    // fresh empty one.
+    if net.unshare_net && !super::already_in_pasta() {
         flags |= CloneFlags::CLONE_NEWNET;
     }
     unshare(flags).context("unshare (is unprivileged_userns_clone enabled?)")?;

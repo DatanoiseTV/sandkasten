@@ -198,6 +198,135 @@ pub(super) struct NetMode {
     pub unshare_net: bool,
     pub bring_up_lo: bool,
     pub label: &'static str,
+    pub kind: NetKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // other variants are carried for render/debug output
+pub(super) enum NetKind {
+    /// Fully private netns (no external connectivity, optional `lo`).
+    /// Covers both the "no network at all" case and the
+    /// "localhost only" case — behaviour-wise they're identical at
+    /// the ruleset level, only `bring_up_lo` changes.
+    PrivateNetns,
+    /// Private netns + pasta (from passt) provides external connectivity.
+    /// nftables applies safely inside pasta's netns.
+    PastaWrap,
+    /// Host netns (fallback when pasta isn't installed, or
+    /// `external = "host"`, or an inbound listener is configured).
+    HostShared,
+    /// `setns()` into an existing netns (user-plumbed via
+    /// `[network.netns_path]`).
+    ExternalNetns,
+}
+
+/// Env var we set on the outer process before `exec pasta -- sandkasten …`
+/// so the inner sandkasten invocation knows it's already in a pasta
+/// netns and shouldn't try to `CLONE_NEWNET` again.
+const PASTA_ENV_MARKER: &str = "SANDKASTEN_PASTA_WRAPPED";
+
+pub(super) fn already_in_pasta() -> bool {
+    std::env::var_os(PASTA_ENV_MARKER).is_some()
+}
+
+fn find_pasta() -> Option<std::path::PathBuf> {
+    // Debian/Ubuntu ship passt with an AppArmor profile that restricts
+    // pasta's exec targets to `passt.avx2` only — blocking our
+    // re-exec-sandkasten approach. Detect and skip if the profile is
+    // enforced, since attempting pasta would fail with a confusing
+    // "Failed to start command or shell: Permission denied" error and
+    // leave the user stuck.
+    if apparmor_restricts_passt() {
+        crate::log::info(format_args!(
+            "pasta found but AppArmor `passt` profile is enforced — skipping \
+             pasta (would fail to exec our re-exec). Falling back to host netns."
+        ));
+        return None;
+    }
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        let p = std::path::Path::new(dir).join("pasta");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    for p in ["/usr/bin/pasta", "/usr/local/bin/pasta", "/usr/sbin/pasta"] {
+        if std::path::Path::new(p).is_file() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    None
+}
+
+fn apparmor_restricts_passt() -> bool {
+    // The kernel-facing `/sys/kernel/security/apparmor/profiles` is
+    // root-only on modern Debian/Ubuntu, so we can't peek at it as
+    // the invoking user. Use the on-disk profile file as a proxy: on
+    // Debian the passt package ships `/etc/apparmor.d/usr.bin.passt`
+    // and the profile is automatically enforced at boot. Absence of
+    // the file means no restriction; presence means the restriction
+    // very likely applies. False positives cost us an unnecessary
+    // host-netns fallback; false negatives cost us a cryptic
+    // "Permission denied" at runtime — so err on the side of the
+    // false positive.
+    std::path::Path::new("/etc/apparmor.d/usr.bin.passt").exists()
+        || std::path::Path::new("/etc/apparmor.d/passt").exists()
+}
+
+/// Re-exec sandkasten under pasta so the sandboxed process runs inside
+/// pasta's userspace-plumbed netns. Never returns on success.
+pub(super) fn exec_under_pasta(_net: &NetMode, argv: &[String], cwd: Option<&Path>) -> Result<i32> {
+    use std::ffi::{CStr, CString};
+    use std::os::unix::ffi::OsStrExt;
+
+    let pasta =
+        find_pasta().ok_or_else(|| anyhow!("pasta binary disappeared between check and exec"))?;
+    let self_exe = std::fs::read_link("/proc/self/exe").context("reading /proc/self/exe")?;
+
+    // Rebuild the invocation: `pasta --config-net -- <self_exe> <orig argv 0..>`
+    // where argv 0.. is the original CLI the user passed us. Reconstruct
+    // from std::env::args() which still holds the parent's argv.
+    // pasta's default `--runas` is "nobody" (unprivileged), which means
+    // the command it exec's can't open our binary (owned by the invoking
+    // user, mode 0755, but ownership still matters for some paths). Pass
+    // the current user's uid:gid explicitly so the inner sandkasten
+    // inherits the same credentials as the outer.
+    let uid_gid = format!("{}:{}", nix::unistd::geteuid(), nix::unistd::getegid());
+    let mut outer_argv: Vec<CString> = vec![
+        CString::new(pasta.as_os_str().as_bytes()).context("pasta path NUL")?,
+        // --config-net: plumb networking and exec the command in it.
+        // --quiet keeps pasta's banner off stderr so the sandboxed
+        // process's output stays the headline.
+        CString::new("--config-net").unwrap(),
+        CString::new("--quiet").unwrap(),
+        CString::new("--runas").unwrap(),
+        CString::new(uid_gid).unwrap(),
+        CString::new("--").unwrap(),
+        CString::new(self_exe.as_os_str().as_bytes()).context("self exe NUL")?,
+    ];
+    for arg in std::env::args().skip(1) {
+        outer_argv.push(CString::new(arg.as_bytes()).context("argv NUL")?);
+    }
+    let _ = argv; // argv is reconstructed from std::env::args above
+    let _ = cwd; // pasta inherits CWD; our inner invocation will --cwd again
+    let c_outer: Vec<&CStr> = outer_argv.iter().map(|c| c.as_c_str()).collect();
+
+    // Propagate the parent environment and add our marker.
+    let mut env_pairs: Vec<CString> = std::env::vars()
+        .filter_map(|(k, v)| CString::new(format!("{k}={v}")).ok())
+        .collect();
+    env_pairs.push(CString::new(format!("{PASTA_ENV_MARKER}=1")).unwrap());
+    let c_env: Vec<&CStr> = env_pairs.iter().map(|c| c.as_c_str()).collect();
+    crate::log::info(format_args!(
+        "wrapping in pasta: {}",
+        outer_argv
+            .iter()
+            .map(|c| c.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    nix::unistd::execve(&outer_argv[0], &c_outer, &c_env)
+        .with_context(|| format!("execve {}", pasta.display()))?;
+    unreachable!()
 }
 
 pub(super) fn net_mode(p: &Profile) -> NetMode {
@@ -207,6 +336,7 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
             unshare_net: false,
             bring_up_lo: false,
             label: "host (shares host netns; Landlock + seccomp still apply)",
+            kind: NetKind::HostShared,
         };
     }
     if p.network.netns_path.is_some() {
@@ -214,6 +344,7 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
             unshare_net: false, // we setns() into an existing one instead
             bring_up_lo: false,
             label: "setns into provided netns_path",
+            kind: NetKind::ExternalNetns,
         };
     }
 
@@ -233,22 +364,37 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
             unshare_net: true,
             bring_up_lo: false,
             label: "none (private netns, no interfaces)",
+            kind: NetKind::PrivateNetns,
         };
     }
-    // Outbound-only or outbound+localhost with no inbound. Without a
-    // pasta/slirp4netns bridge a private Linux netns has no interface
-    // to reach the internet, so everything dies at getaddrinfo. Match
-    // macOS's out-of-the-box behaviour by sharing the host netns; the
-    // sandboxed process can still be constrained by Landlock, seccomp,
-    // and the namespace barriers on /mnt, /proc, etc. Users who want
-    // per-IP filtering should point `[network.netns_path]` at a
-    // pre-plumbed namespace or set `external = "isolated"` (reserved
-    // for future pasta integration).
+    // Outbound-only or outbound+localhost with no inbound. Prefer pasta
+    // (from passt) if installed — it creates a userspace-plumbed netns so
+    // our private netns actually reaches the internet, AND nftables
+    // rules applied inside that netns don't affect the host. If pasta
+    // isn't installed, fall back to sharing the host netns: per-IP
+    // filtering isn't enforced (kernel rules would hit host globally)
+    // but at least the internet works OOB. Users can override both
+    // paths with `[network.netns_path]`.
     if !has_inbound && wants_external {
+        if find_pasta().is_some() {
+            return NetMode {
+                unshare_net: true,
+                bring_up_lo: p.network.allow_localhost,
+                label: "private netns + pasta (external connectivity plumbed; nftables applies)",
+                kind: NetKind::PastaWrap,
+            };
+        }
+        let label = if apparmor_restricts_passt() {
+            "host netns fallback (AppArmor `passt` profile blocks our exec path — \
+             disable the profile or use [network.netns_path] for per-IP isolation)"
+        } else {
+            "host netns fallback (install `passt` for per-IP isolation)"
+        };
         return NetMode {
             unshare_net: false,
             bring_up_lo: false,
-            label: "host netns (outbound+localhost; set [network.netns_path] for per-IP isolation)",
+            label,
+            kind: NetKind::HostShared,
         };
     }
     if !has_inbound {
@@ -256,11 +402,13 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
             unshare_net: true,
             bring_up_lo: p.network.allow_localhost,
             label: "private netns (localhost only)",
+            kind: NetKind::PrivateNetns,
         };
     }
     NetMode {
         unshare_net: false,
         bring_up_lo: false,
         label: "host (inherits parent netns — inbound requires this)",
+        kind: NetKind::HostShared,
     }
 }
