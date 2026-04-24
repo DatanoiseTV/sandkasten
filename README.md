@@ -121,11 +121,17 @@ allow_inbound = false
 allow_icmp = false              # ICMP (ping)
 allow_icmpv6 = false
 allow_raw_sockets = false       # AF_INET/SOCK_RAW — privileged
-outbound_tcp = ["*:443", "*:80"]
+allow_sctp = false              # Stream Control Transmission Protocol
+allow_dccp = false              # Datagram Congestion Control Protocol
+allow_udplite = false           # UDP-Lite
+outbound_tcp = ["*:443", "*:80", "10.0.0.5:22", "example.com:8080"]
 outbound_udp = []
 inbound_tcp  = []
 inbound_udp  = []
-extra_protocols = []            # e.g. ["sctp"]
+extra_protocols = []            # additional `meta l4proto X` on Linux
+# Named protocol/service presets that expand into concrete TCP/UDP rules
+# at profile-load time. See the full list below.
+presets = ["https", "webrtc", "ssh", "postgres"]
 
 [process]
 allow_fork = false              # default-deny; templates opt-in
@@ -290,6 +296,29 @@ The UI is local-only and minimalistic. Features:
 - **No `run` endpoint**: the UI edits profiles only. You launch profiles
   yourself via `sandkasten run`. This keeps the attack surface small.
 
+### Network-protocol presets
+
+`presets` gives short ergonomic names for common port/protocol bundles.
+Every preset only adds to the outbound allowlist — nothing permissive is
+implicit. Kernel sandboxes see L3/L4 traffic; an application-layer name
+like `"rtp"` resolves to the UDP port range that protocol customarily
+uses. On Linux, port ranges reach `nftables` natively; on macOS the
+Seatbelt grammar has no range form and we widen to `*:PORT` (noted in
+the rendered policy).
+
+| group       | presets                                                                   |
+|-------------|---------------------------------------------------------------------------|
+| Web         | `http`, `https`, `quic`, `web`                                            |
+| Realtime    | `rtp`, `sip`, `stun`, `webrtc`                                            |
+| Remote      | `ssh`, `rdp`, `vnc`                                                       |
+| Mail        | `smtp`, `smtps`, `imap`, `imaps`, `pop3`, `pop3s`                         |
+| Files       | `ftp`, `ftps`, `sftp`, `git`                                              |
+| Auth        | `ldap`, `ldaps`, `kerberos`                                               |
+| Databases   | `mysql`, `postgres`, `redis`, `memcached`, `mongodb`, `cassandra`, `elastic` |
+| Chat        | `irc`, `ircs`, `xmpp`, `matrix`, `mqtt`, `mqtts`                          |
+| Time / disc | `ntp`, `mdns`, `dhcp`, `dns`                                              |
+| Diagnostics | `ping` (ICMP + ICMPv6)                                                    |
+
 ## Profile signing
 
 sandkasten verifies **minisign** ed25519 signatures — same format as Jedisct1's
@@ -419,6 +448,10 @@ Shipping honestly so nobody gets surprised:
 - [x] Persistent workspace directory (`[workspace]`) — cross-platform
 - [x] Linux overlayfs copy-on-write (`[overlay]`)
 - [x] Outbound redirects (Linux nftables DNAT) + outbound blocks (cross-platform)
+- [x] Protocol coverage: SCTP / DCCP / UDPLite flags + `presets` for
+      HTTP(S) / QUIC / RTP / SIP / STUN / WebRTC / SSH / databases /
+      mail / chat / NTP / mDNS — ~35 named presets that expand into
+      concrete TCP/UDP rules
 - [ ] Bundled `pasta` / `slirp4netns` integration for turnkey outbound
 - [ ] Transparent mock interposition via LD_PRELOAD / DYLD_INSERT_LIBRARIES
 - [ ] Homebrew tap

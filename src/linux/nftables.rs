@@ -126,6 +126,21 @@ fn render_ruleset(net: &Network) -> Result<String> {
     if net.allow_icmpv6 {
         rules.push_str("        ip6 nexthdr icmpv6 accept\n");
     }
+    if net.allow_sctp {
+        rules.push_str("        meta l4proto sctp accept\n");
+    }
+    if net.allow_dccp {
+        rules.push_str("        meta l4proto dccp accept\n");
+    }
+    if net.allow_udplite {
+        rules.push_str("        meta l4proto udplite accept\n");
+    }
+    for extra in &net.extra_protocols {
+        rules.push_str(&format!(
+            "        meta l4proto {} accept  # via extra_protocols\n",
+            extra.to_ascii_lowercase()
+        ));
+    }
     for ep in &net.outbound_tcp {
         emit_host_port(&mut rules, "tcp", ep)?;
     }
@@ -163,6 +178,7 @@ fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> 
     let dport_clause = match from.port {
         crate::config::PortSpec::Any => String::new(),
         crate::config::PortSpec::Num(n) => format!(" {proto} dport {n}"),
+        crate::config::PortSpec::Range(lo, hi) => format!(" {proto} dport {lo}-{hi}"),
     };
     // Target (to).
     let to_str = match (&to.host, to.port) {
@@ -170,6 +186,11 @@ fn emit_redirect(rules: &mut String, r: &crate::config::Redirect) -> Result<()> 
         (crate::config::HostSpec::Ipv4(v), crate::config::PortSpec::Any) => v.to_string(),
         (crate::config::HostSpec::Ipv6(v), crate::config::PortSpec::Num(p)) => format!("[{v}]:{p}"),
         (crate::config::HostSpec::Ipv6(v), crate::config::PortSpec::Any) => format!("[{v}]"),
+        (_, crate::config::PortSpec::Range(_, _)) => {
+            return Err(anyhow!(
+                "redirect `to` cannot be a port range — pick a single target port"
+            ))
+        }
         (crate::config::HostSpec::Name(_), _) | (crate::config::HostSpec::Any, _) => {
             return Err(anyhow!(
                 "redirect `to` must be an IP[:port]; got {:?}",
@@ -227,6 +248,7 @@ fn emit_host_port(rules: &mut String, proto: &str, endpoint: &str) -> Result<()>
     let port_clause = match e.port {
         PortSpec::Any => String::new(),
         PortSpec::Num(n) => format!(" {proto} dport {n}"),
+        PortSpec::Range(lo, hi) => format!(" {proto} dport {lo}-{hi}"),
     };
     match e.host {
         HostSpec::Any => {

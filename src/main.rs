@@ -24,6 +24,7 @@ mod limits;
 mod log;
 mod mocks;
 mod net_files;
+mod presets;
 mod signing;
 mod templates;
 mod ui;

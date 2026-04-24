@@ -169,6 +169,21 @@ pub fn generate(p: &Profile) -> String {
             s.push_str("(allow system-socket)\n");
             s.push_str("(allow network-bind)\n");
         }
+
+        // SCTP / DCCP / UDPLite: Seatbelt's per-protocol filter syntax is
+        // undocumented for these, and support varies. Grant at the broad
+        // `remote ip` level — destination port is not filterable here.
+        let has_exotic_proto = p.network.allow_sctp
+            || p.network.allow_dccp
+            || p.network.allow_udplite
+            || !p.network.extra_protocols.is_empty();
+        if has_exotic_proto {
+            s.push_str("(allow network-outbound (remote ip \"*:*\"))\n");
+            s.push_str(
+                ";; NOTE: SCTP/DCCP/UDPLite/extra_protocols on macOS widen to\n\
+                 ;; `remote ip *:*` — port-level filtering for these is Linux-only.\n",
+            );
+        }
         if p.network.allow_raw_sockets {
             // SBPL has no direct raw-socket filter — this broad grant lets
             // the process open AF_INET/SOCK_RAW. Highly privileged: avoid.
@@ -339,6 +354,10 @@ fn local_sbpl(e: &Endpoint, widened: &mut bool) -> String {
     let port_str = match e.port {
         PortSpec::Any => "*".to_string(),
         PortSpec::Num(n) => n.to_string(),
+        PortSpec::Range(_, _) => {
+            *widened = true;
+            "*".to_string()
+        }
     };
     format!("\"{host_str}:{port_str}\"")
 }
@@ -360,10 +379,15 @@ fn emit_net(kind: &str, proto: &str, e: &Endpoint, widened: &mut bool) -> String
     if had_to_widen {
         *widened = true;
     }
-    let port_str = match e.port {
-        PortSpec::Any => "*".to_string(),
-        PortSpec::Num(n) => n.to_string(),
+    let (port_str, port_widened) = match e.port {
+        PortSpec::Any => ("*".to_string(), false),
+        PortSpec::Num(n) => (n.to_string(), false),
+        // Seatbelt grammar has no port-range — widen to `*`.
+        PortSpec::Range(_, _) => ("*".to_string(), true),
     };
+    if port_widened {
+        *widened = true;
+    }
     format!("(allow {kind} (remote {proto} \"{host_str}:{port_str}\"))\n")
 }
 

@@ -191,9 +191,21 @@ pub struct Network {
     #[serde(default)]
     pub allow_raw_sockets: bool,
 
-    /// Additional outbound L4 protocols to allow (e.g. "sctp"). Not every
+    /// Allow SCTP (Stream Control Transmission Protocol).
+    #[serde(default)]
+    pub allow_sctp: bool,
+
+    /// Allow DCCP (Datagram Congestion Control Protocol).
+    #[serde(default)]
+    pub allow_dccp: bool,
+
+    /// Allow UDP-Lite.
+    #[serde(default)]
+    pub allow_udplite: bool,
+
+    /// Escape hatch for additional outbound L4 protocols by name. Not every
     /// protocol is expressible in macOS's Seatbelt grammar; unsupported
-    /// entries widen to a broad grant with a warning.
+    /// entries widen to a broad `remote ip` grant with a warning.
     #[serde(default)]
     pub extra_protocols: Vec<String>,
 
@@ -202,6 +214,14 @@ pub struct Network {
     /// and fail to start without this.
     #[serde(default)]
     pub allow_unix_sockets: bool,
+
+    /// Named protocol/service presets that expand into concrete TCP/UDP
+    /// rules at profile-load time. Known tokens:
+    ///   http, https, quic, ssh, ntp, mdns, rtp, sip, stun, webrtc, ldap,
+    ///   ldaps, smtp, smtps, imap, imaps, pop3, pop3s, ftp, ftps, irc,
+    ///   ircs, mysql, postgres, redis, memcached, mongodb, git.
+    #[serde(default)]
+    pub presets: Vec<String>,
 
     /// DNS server override. On Linux the synthetic resolv.conf is bind-
     /// mounted over `/etc/resolv.conf` in the sandbox's mount namespace,
@@ -496,9 +516,13 @@ impl Profile {
         extend(&mut out.network.inbound_udp, self.network.inbound_udp);
         out.network.allow_icmp |= self.network.allow_icmp;
         out.network.allow_icmpv6 |= self.network.allow_icmpv6;
+        out.network.allow_sctp |= self.network.allow_sctp;
+        out.network.allow_dccp |= self.network.allow_dccp;
+        out.network.allow_udplite |= self.network.allow_udplite;
         out.network.allow_raw_sockets |= self.network.allow_raw_sockets;
         out.network.allow_unix_sockets |= self.network.allow_unix_sockets;
         extend(&mut out.network.extra_protocols, self.network.extra_protocols);
+        extend(&mut out.network.presets, self.network.presets);
         // DNS & hosts: child wins on any set value, otherwise inherit.
         if !self.network.dns.servers.is_empty() {
             out.network.dns.servers = self.network.dns.servers;
@@ -709,6 +733,8 @@ pub enum HostSpec {
 pub enum PortSpec {
     Any,
     Num(u16),
+    /// Inclusive range `lo..=hi`.
+    Range(u16, u16),
 }
 
 pub fn parse_endpoint(s: &str) -> Result<Endpoint> {
@@ -746,6 +772,13 @@ pub fn parse_endpoint(s: &str) -> Result<Endpoint> {
 
     let port = if port == "*" {
         PortSpec::Any
+    } else if let Some((a, b)) = port.split_once('-') {
+        let lo: u16 = a.parse().context("invalid port range lower bound")?;
+        let hi: u16 = b.parse().context("invalid port range upper bound")?;
+        if hi < lo {
+            return Err(anyhow!("port range {lo}-{hi} is inverted"));
+        }
+        PortSpec::Range(lo, hi)
     } else {
         PortSpec::Num(port.parse().context("invalid port number")?)
     };
@@ -809,9 +842,11 @@ fn merge_parents(mut p: Profile) -> Result<Profile> {
     Ok(p)
 }
 
-/// Finalize a profile: expand path variables using `ctx`, then validate.
+/// Finalize a profile: expand path variables using `ctx`, expand named
+/// protocol/service presets, then validate.
 pub fn finalize(mut p: Profile, ctx: &ExpandContext) -> Result<Profile> {
     p.expand_paths(ctx)?;
+    crate::presets::expand(&mut p);
     p.validate()?;
     Ok(p)
 }
