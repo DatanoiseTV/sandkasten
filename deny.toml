@@ -1,0 +1,58 @@
+# cargo-deny configuration. See https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally:  cargo install --locked cargo-deny && cargo deny check
+# Run in CI:    .github/workflows/ci.yml — `supply-chain` job
+
+[graph]
+all-features = true
+
+[advisories]
+# Treat any RustSec advisory hit on a lockfile dep as a hard CI fail.
+# Yanked-but-not-vulnerable crates are flagged as warnings (we do
+# pin via Cargo.lock so yanked just means "upstream withdrew it",
+# not "exploit known").
+ignore = []
+
+[licenses]
+# Project licenses we ship under — both must be in scope for the SBOM
+# to look right when we tell users to pick one.
+allow = [
+    # Our own dual-license.
+    "MIT",
+    "Apache-2.0",
+    # Common permissive licenses that show up in the dep tree. Adding
+    # any new license here is a deliberate choice — the alternative is
+    # confine-and-replace the offending dep.
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# Licenses that, if a dep were to introduce them, should hard-fail
+# CI rather than silently pass through.
+confidence-threshold = 0.93
+
+[bans]
+# Multiple major versions of the same crate in the dep graph is a
+# code-size + audit-surface tax. Warn (not deny) so we see when it
+# happens but aren't blocked on a single dep that's slow to bump
+# its own deps.
+multiple-versions = "warn"
+wildcards = "deny"
+
+# Crates we want to keep out of the dep graph entirely. Empty by
+# default; populate when a specific reason arises.
+deny = []
+
+[sources]
+# Only allow crates from the official registry. Anything coming from
+# a git URL or alternative registry has to be explicitly listed.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

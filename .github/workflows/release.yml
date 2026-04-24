@@ -15,6 +15,11 @@ env:
 
 permissions:
   contents: write
+  # OIDC token for sigstore/cosign keyless signing of release artifacts.
+  id-token: write
+  # actions/attest-build-provenance writes attestation predicates to
+  # the GitHub provenance API.
+  attestations: write
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
@@ -184,6 +189,46 @@ jobs:
             -exec cp -v {} release-files/ \;
           ls -la release-files/
 
+      # ─── Supply-chain artefacts ──────────────────────────────────
+      # SBOM (CycloneDX) for the source tree at this tag — names the
+      # exact crate versions that produced the binaries above. Ships
+      # alongside the tarballs so deployers can audit the dep graph
+      # without re-running `cargo metadata`.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          cargo install --locked cargo-sbom
+          cargo sbom --output-format=cyclone_dx_json_1_4 \
+            > release-files/sandkasten-${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}.cdx.json
+
+      # Sigstore keyless signing — every tarball + the SBOM gets a
+      # `.sig` and `.cert.pem` next to it. No long-lived keys; the
+      # OIDC token from this workflow is the trust anchor, recorded
+      # in the public sigstore Rekor transparency log.
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign artefacts (sigstore keyless)
+        run: |
+          set -euo pipefail
+          cd release-files
+          for f in *.tar.gz *.zip *.cdx.json; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes "$f" \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.cert.pem"
+          done
+          ls -la *.sig *.cert.pem | head
+
+      # Build-provenance attestation for the binaries themselves —
+      # records {who built it, what workflow, what commit, what
+      # builder image} into the GitHub Attestation API. Verifiable
+      # with `gh attestation verify <file> --owner DatanoiseTV`.
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            release-files/*.tar.gz
+            release-files/*.zip
+            release-files/*.cdx.json
+
       - name: Build release notes
         id: notes
         run: |
@@ -216,9 +261,36 @@ jobs:
             echo
             echo "### Verify"
             echo
+            echo "Three independent integrity checks ship with every"
+            echo "release; any one of them is sufficient on its own."
+            echo
+            echo "**SHA-256:**"
             echo '```sh'
             echo "shasum -a 256 -c sandkasten-${TAG}-*-sha256  # or any individual .sha256"
             echo '```'
+            echo
+            echo "**Sigstore (recommended):** every artefact has a"
+            echo "matching \`.sig\` + \`.cert.pem\`. No key management"
+            echo "— verification follows the public Rekor transparency"
+            echo "log."
+            echo '```sh'
+            echo "cosign verify-blob \\"
+            echo "  --certificate sandkasten-${TAG}-x86_64-unknown-linux-gnu.tar.gz.cert.pem \\"
+            echo "  --signature   sandkasten-${TAG}-x86_64-unknown-linux-gnu.tar.gz.sig \\"
+            echo "  --certificate-identity-regexp 'https://github.com/DatanoiseTV/sandkasten/' \\"
+            echo "  --certificate-oidc-issuer    'https://token.actions.githubusercontent.com' \\"
+            echo "  sandkasten-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            echo '```'
+            echo
+            echo "**Build provenance (SLSA):**"
+            echo '```sh'
+            echo "gh attestation verify sandkasten-${TAG}-x86_64-unknown-linux-gnu.tar.gz \\"
+            echo "  --owner DatanoiseTV"
+            echo '```'
+            echo
+            echo "**SBOM (CycloneDX):** \`sandkasten-${TAG}.cdx.json\` lists every"
+            echo "crate that contributed to the binary, with versions, licenses,"
+            echo "and source registries."
           } > RELEASE_NOTES.md
           echo "path=RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
 

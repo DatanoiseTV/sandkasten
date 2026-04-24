@@ -63,6 +63,44 @@ jobs:
       - run: cargo build --release
       - run: cargo test --release
 
+  supply-chain:
+    name: Supply-chain hygiene (audit + deny + SBOM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Known-vulnerability scan against the lockfile (RustSec advisory DB).
+      - name: cargo-audit
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit
+
+      # License + duplicate + source-allow-list policy enforcement
+      # (deny.toml lives at the repo root). Fails the build on any
+      # disallowed license, banned crate, untrusted source registry, or
+      # duplicate dependency version above the policy threshold.
+      - name: cargo-deny
+        run: |
+          cargo install --locked cargo-deny
+          cargo deny check
+
+      # CycloneDX-format SBOM uploaded as a CI artifact and (on tag
+      # pushes via release.yml) attached to the GitHub release.
+      - name: cargo-sbom (CycloneDX)
+        run: |
+          cargo install --locked cargo-sbom
+          cargo sbom --output-format=cyclone_dx_json_1_4 > sandkasten.cdx.json
+          # Sanity-check the document structure.
+          python3 -c 'import json,sys; d=json.load(open("sandkasten.cdx.json")); \
+            assert d["bomFormat"]=="CycloneDX"; \
+            print(f"SBOM OK: {len(d.get(\"components\",[]))} components")'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sandkasten.cdx.json
+
   linux-smoke:
     name: Linux (end-to-end sandbox smoke)
     needs: linux

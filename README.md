@@ -829,6 +829,14 @@ sandkasten run --verify my.toml -- my-cmd
 
 Built-in templates ship inside the signed binary — they skip `--verify`.
 
+### Verifying the sandkasten binary itself
+
+Distinct from profile signing above: every release ships **sigstore
+keyless signatures** (`*.sig` + `*.cert.pem`), **GitHub build
+provenance** (SLSA), and a **CycloneDX SBOM** alongside the SHA-256
+hashes. See [SIGNING.md](SIGNING.md) for the full verification
+recipe and what each layer actually proves.
+
 ## Security model
 
 ### What sandkasten enforces
