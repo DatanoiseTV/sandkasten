@@ -78,14 +78,15 @@ jobs:
       - run: cargo build --release
       - name: "`sandkasten run` end-to-end"
         run: |
-          target/release/sandkasten render self
+          BIN="$(pwd)/target/release/sandkasten"
+          "$BIN" render self
           echo 'hello sandkasten' > /tmp/sk-test.txt
           cd /tmp
-          target/release/sandkasten -v run self -- /bin/cat /tmp/sk-test.txt
+          "$BIN" -v run self -- /bin/cat /tmp/sk-test.txt
       - name: Verify signing pipeline (no-sig case)
         run: |
           set +e
-          target/release/sandkasten verify /tmp/sk-test.txt
+          "$(pwd)/target/release/sandkasten" verify /tmp/sk-test.txt
           rc=$?
           [ $rc -ne 0 ] || { echo "expected non-zero when unsigned"; exit 1; }
           echo "signing: correctly refused unsigned profile"
