@@ -329,6 +329,110 @@ Inside a private netns with `CAP_NET_RAW` you can run `tcpdump` or
 `nmap` against loopback or any veth you've plumbed in, without that
 activity being visible on the host's interfaces.
 
+### Isolate a CI/CD step (GitHub Actions example)
+
+Dependency installs (`npm install`, `pip install`, `cargo fetch`, …),
+untrusted PR test code, and build steps that execute scripts from
+third-party packages are the classic supply-chain attack surface on a
+CI runner. Wrapping them in sandkasten keeps them off the runner's
+credentials, the tokens in `~/.aws` / `~/.docker`, and the rest of the
+workspace.
+
+```yaml
+# .github/workflows/sandboxed-install.yml
+name: sandboxed-install
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04    # 24.04 ships an AppArmor profile that
+                             # blocks unprivileged userns — either use
+                             # 22.04, or add `sudo aa-teardown`.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install sandkasten (prebuilt binary, ~2s)
+        run: |
+          VERSION=0.4.0
+          curl -sSL -o sk.tar.gz \
+            "https://github.com/DatanoiseTV/sandkasten/releases/download/v${VERSION}/sandkasten-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf sk.tar.gz
+          sudo install sandkasten-v${VERSION}-x86_64-unknown-linux-gnu/sandkasten /usr/local/bin/
+          # Install slirp4netns so outbound network + per-IP nftables
+          # filtering work inside the sandbox (instead of falling back
+          # to host netns).
+          sudo apt-get update -qq && sudo apt-get install -y -qq slirp4netns
+
+      - name: `npm install` under a hardened sandbox
+        run: |
+          # Fresh profile in the workspace dir — no access to host HOME,
+          # no ~/.ssh / ~/.aws / ~/.npmrc leakage, only outbound to the
+          # npm registry.
+          cat > ci.toml <<'EOF'
+          name = "ci-npm"
+          extends = "network-client"
+          [filesystem]
+          read_write = [ "${CWD}" ]
+          [network]
+          outbound_tcp = [
+            "*:443",             # registry.npmjs.org et al.
+          ]
+          [process]
+          block_privilege_elevation = true
+          block_setid_syscalls      = true
+          no_w_x                    = true   # Linux 6.3+; safe for npm
+          EOF
+          sandkasten run ci.toml -- npm ci --no-audit --no-fund
+
+      - name: Run tests under the same profile
+        run: sandkasten run ci.toml -- npm test
+```
+
+What this gives you on a standard GitHub hosted runner:
+
+- `package.json` post-install scripts can't reach `~/.npmrc` / `~/.aws` /
+  the `GITHUB_TOKEN` env var the runner auto-exports (it's not
+  in the profile's `env.pass`).
+- Outbound is restricted to TCP 443 — a compromised install can't
+  exfiltrate to `curl http://attacker:8080/` or SSH tunnel out.
+- `process.block_privilege_elevation` neuters `sudo` even if the
+  runner has a passwordless sudoers entry (GitHub's does).
+- `no_w_x` blocks the classic "write shellcode into an RW page,
+  mprotect it executable, jump to it" pattern.
+
+Self-hosted runners get the same guarantees plus full per-IP
+outbound filtering (pasta or slirp4netns plumbs the private netns).
+On hosted runners the `network-client` base falls back to host netns
+when pasta/slirp4netns isn't installed — network is still reachable,
+but per-IP filtering isn't kernel-enforced.
+
+### Isolate a CI/CD step (GitLab CI example)
+
+```yaml
+sandboxed-tests:
+  image: ubuntu:22.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl slirp4netns ca-certificates
+    - curl -sSL https://github.com/DatanoiseTV/sandkasten/releases/download/v0.4.0/sandkasten-v0.4.0-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+    - install sandkasten-*/sandkasten /usr/local/bin/
+  script:
+    - |
+      cat > ci.toml <<'EOF'
+      extends = "network-client"
+      [filesystem]
+      read_write = [ "${CWD}" ]
+      [process]
+      block_privilege_elevation = true
+      block_setid_syscalls      = true
+      EOF
+    - sandkasten run ci.toml -- ./run-untrusted-tests.sh
+```
+
+Note on GitLab/self-hosted runners: the `unprivileged_userns_clone`
+sysctl must be set to 1 (default on most recent distros). `sandkasten
+doctor` reports the value and the distro-specific one-liner to enable
+it.
+
 ### Drop a throwaway overlay for ephemeral experiments (Linux)
 
 ```toml
