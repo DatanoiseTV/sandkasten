@@ -812,16 +812,28 @@ sandkasten verifies minisign ed25519 signatures — same format as
 Jedisct1's `minisign` CLI (`brew install minisign`, `apt install
 minisign`).
 
-```sh
-minisign -G -p sandkasten.pub -s sandkasten.key    # one-off key pair
-minisign -Sm my.toml -s sandkasten.key             # sign → my.toml.minisig
+> ⚠️ **Generate the key pair OUTSIDE any git working tree** and keep
+> the private file (`sandkasten.key`) on disk only — never commit it.
+> The repo's `.gitignore` denies `*.key` / `*.sec` / `*.pem` / `*.priv`
+> by pattern as a backstop, but the right habit is to put the key in
+> `~/.config/sandkasten/private/` (mode 0600) and only ever copy the
+> `*.pub` half into source control if you publish trusted-key bundles.
 
-# Install trusted key:
+```sh
+# One-off key pair, generated in your home dir (NOT inside the repo):
+mkdir -p ~/.config/sandkasten/private && chmod 700 ~/.config/sandkasten/private
+minisign -G -p ~/.config/sandkasten/private/sandkasten.pub \
+            -s ~/.config/sandkasten/private/sandkasten.key
+
+# Sign a profile (output: my.toml.minisig):
+minisign -Sm my.toml -s ~/.config/sandkasten/private/sandkasten.key
+
+# Install the public key as a trusted verifier:
 mkdir -p ~/.config/sandkasten/trusted_keys
-cp sandkasten.pub ~/.config/sandkasten/trusted_keys/
+cp ~/.config/sandkasten/private/sandkasten.pub ~/.config/sandkasten/trusted_keys/
 
 sandkasten verify my.toml
-# → ok: my.toml verified against key ~/.config/sandkasten/trusted_keys/sandkasten.pub
+# → ok: my.toml verified against ~/.config/sandkasten/trusted_keys/sandkasten.pub
 
 sandkasten run --verify my.toml -- my-cmd
 # refuses to launch if the signature doesn't validate

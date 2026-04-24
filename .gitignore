@@ -1,5 +1,74 @@
+# ── Build artefacts ──────────────────────────────────────────────────
 /target
 Cargo.lock.bak
 *.swp
 .DS_Store
 .claude/
+
+# Swift UI
+swift-ui/.build/
+swift-ui/Package.resolved
+swift-ui/icon/AppIcon.iconset/
+
+# ── PRIVATE KEYS — must never be committed ───────────────────────────
+# Belt-and-suspenders: the workflows only use sigstore *keyless*
+# signing (no local key material), but a contributor running
+# `minisign -G -s sandkasten.key …` from the README's profile-signing
+# example would otherwise create a *.key file at the repo root.
+# Everything below is denied by pattern.
+
+# Generic key extensions.
+*.key
+*.priv
+*.private
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.pkcs12
+*.asc
+
+# OpenSSH / GPG / age private keys.
+id_rsa
+id_ed25519
+id_dsa
+id_ecdsa
+*.gpg
+*.pgp
+secring.*
+secret-keyring.*
+*.age
+*.age.txt
+
+# minisign private keys (the public counterpart `*.pub` is fine to
+# commit; the private file is what we need to keep out).
+*.sec
+sandkasten.key
+sandkasten.sec
+*minisign*.key
+*minisign*.sec
+
+# cosign / sigstore private keys (we don't generate any in this repo
+# — the release workflow uses keyless OIDC — but a contributor
+# experimenting locally with `cosign generate-key-pair` should not be
+# able to commit the result by accident).
+cosign.key
+cosign.pub.password
+*.cosign.key
+
+# Generic dotenv-style secrets.
+.env
+.env.*
+!.env.example
+
+# Per-tool config dirs that may carry secrets.
+.aws/
+.config/gcloud/
+.config/sandkasten/trusted_keys/
+
+# CI/runner caches that often pull credentials onto disk.
+*.kubeconfig
+*kubeconfig*
+.terraform.tfstate
+.terraform.tfstate.backup
