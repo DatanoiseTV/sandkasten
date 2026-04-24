@@ -39,7 +39,7 @@ jobs:
             runner: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -93,7 +93,7 @@ jobs:
           shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           ls -la "${NAME}.tar.gz"*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: |
@@ -108,7 +108,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -142,7 +142,7 @@ jobs:
           shasum -a 256 "${NAME}.zip" > "${NAME}.zip.sha256"
           ls -la "${NAME}.zip"*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-app
           path: |
@@ -157,12 +157,12 @@ jobs:
     needs: [build-cli, build-macos-app]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need tags + log for release notes
 
       - name: Download all artefacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -213,7 +213,7 @@ jobs:
           echo "path=RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name || github.event.inputs.tag }}
           name: sandkasten ${{ github.ref_name || github.event.inputs.tag }}
