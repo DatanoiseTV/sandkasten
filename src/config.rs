@@ -1297,6 +1297,24 @@ pub fn finalize(mut p: Profile, ctx: &ExpandContext) -> Result<Profile> {
         }
     }
 
+    // Overlayfs: writes to the merged mount land on the upper dir, so
+    // both the mount point (what the sandboxed process sees) and the
+    // upper dir (what Landlock actually checks) must be in the
+    // filesystem.read_write list. Auto-add them — users don't have to
+    // think about this and it can't be wrong.
+    for path in [
+        p.overlay.upper.clone(),
+        p.overlay.mount.clone(),
+        // lower stays read-only on purpose.
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !p.filesystem.read_write.iter().any(|x| x == &path) {
+            p.filesystem.read_write.push(path);
+        }
+    }
+
     // Network proxy: set env vars + optionally narrow outbound_tcp.
     apply_proxy(&mut p);
 

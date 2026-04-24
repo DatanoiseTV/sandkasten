@@ -62,16 +62,19 @@ pub fn load(profile: &Profile, profile_name: &str, snap_name: &str) -> Result<()
     }
     // Move current upper out of the way rather than deleting it.
     if upper.exists() {
-        let ts = std::time::SystemTime::now()
+        // Nanosecond precision + the current PID so two consecutive
+        // `snap load` calls (same-second) don't clash on the backup name.
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_nanos())
             .unwrap_or(0);
+        let pid = std::process::id();
         let mut bak = upper.clone();
         let name = upper
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("upper");
-        bak.set_file_name(format!("{name}.bak-{ts}"));
+        bak.set_file_name(format!("{name}.bak-{nanos}-{pid}"));
         std::fs::rename(&upper, &bak)
             .with_context(|| format!("renaming {} → {}", upper.display(), bak.display()))?;
         eprintln!("sandkasten │ previous upper moved to {}", bak.display());

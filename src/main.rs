@@ -349,21 +349,49 @@ fn run(args: cli::Cli) -> Result<i32> {
         }
         cli::Command::Snap(sub) => {
             let ctx = config::ExpandContext::detect(None)?;
+            // A snapshot is keyed by a short identifier, not a TOML file
+            // path. When the user passes the same argument they'd use for
+            // `sandkasten run` (which can be a path), derive the key from
+            // the profile's `name = ...` field, falling back to the file
+            // stem. Keeps the `snap` CLI consistent with `run`.
+            let snap_key = |arg: &str, prof: &config::Profile| -> String {
+                if let Some(n) = prof.name.as_deref().filter(|n| !n.is_empty()) {
+                    return n.to_string();
+                }
+                std::path::Path::new(arg)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(arg)
+                    .to_string()
+            };
             match sub {
                 cli::SnapCmd::Save(a) => {
                     let prof = config::finalize(config::load(&a.profile)?, &ctx)?;
-                    let path = snapshot::save(&prof, &a.profile, &a.name)?;
+                    let key = snap_key(&a.profile, &prof);
+                    let path = snapshot::save(&prof, &key, &a.name)?;
                     println!("saved to {}", path.display());
                     Ok(0)
                 }
                 cli::SnapCmd::Load(a) => {
                     let prof = config::finalize(config::load(&a.profile)?, &ctx)?;
-                    snapshot::load(&prof, &a.profile, &a.name)?;
-                    println!("restored {} for {}", a.name, a.profile);
+                    let key = snap_key(&a.profile, &prof);
+                    snapshot::load(&prof, &key, &a.name)?;
+                    println!("restored {} for {}", a.name, key);
                     Ok(0)
                 }
                 cli::SnapCmd::List { profile } => {
-                    for name in snapshot::list(&profile)? {
+                    // Best-effort key resolution — if `profile` parses as a
+                    // TOML file we use its `name`, otherwise treat it as the
+                    // key directly (same as before).
+                    let key = if std::path::Path::new(&profile).exists() {
+                        match config::load(&profile).and_then(|p| config::finalize(p, &ctx)) {
+                            Ok(p) => snap_key(&profile, &p),
+                            Err(_) => profile.clone(),
+                        }
+                    } else {
+                        profile.clone()
+                    };
+                    for name in snapshot::list(&key)? {
                         println!("{name}");
                     }
                     Ok(0)
