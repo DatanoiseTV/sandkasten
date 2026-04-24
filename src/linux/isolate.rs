@@ -34,6 +34,20 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
     write_map("/proc/self/uid_map", format!("0 {uid} 1\n").as_bytes()).context("uid_map")?;
     write_map("/proc/self/gid_map", format!("0 {gid} 1\n").as_bytes()).context("gid_map")?;
 
+    // Optional: join an existing network namespace (e.g. one set up by the
+    // user with `ip netns add vpn; ip netns exec vpn wg-quick up wg0`).
+    if let Some(path) = profile.network.netns_path.as_deref() {
+        use std::os::fd::AsRawFd;
+        let f = std::fs::File::open(path)
+            .with_context(|| format!("opening netns {path}"))?;
+        // SAFETY: setns with a valid netns fd and CLONE_NEWNET.
+        let rc = unsafe { libc::setns(f.as_raw_fd(), libc::CLONE_NEWNET) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("setns({path}, CLONE_NEWNET)"));
+        }
+    }
+
     // Set a neutral hostname inside the UTS namespace.
     let _ = nix::unistd::sethostname("sandkasten");
 

@@ -186,6 +186,22 @@ pub(super) struct NetMode {
 }
 
 pub(super) fn net_mode(p: &Profile) -> NetMode {
+    // Explicit user choice wins.
+    if p.network.external.as_deref() == Some("host") {
+        return NetMode {
+            unshare_net: false,
+            bring_up_lo: false,
+            label: "host (shares host netns; Landlock + seccomp still apply)",
+        };
+    }
+    if p.network.netns_path.is_some() {
+        return NetMode {
+            unshare_net: false, // we setns() into an existing one instead
+            bring_up_lo: false,
+            label: "setns into provided netns_path",
+        };
+    }
+
     let has_outbound = !p.network.outbound_tcp.is_empty() || !p.network.outbound_udp.is_empty();
     let has_inbound = p.network.allow_inbound
         || !p.network.inbound_tcp.is_empty()

@@ -409,6 +409,28 @@ pub struct Network {
     #[serde(default)]
     pub hosts_entries: std::collections::BTreeMap<String, String>,
 
+    /// External network integration (Linux only). Values:
+    ///   * `none` (default) — sandkasten unshares a private netns; outbound
+    ///     requires bringing your own plumbing.
+    ///   * `host` — skip the netns unshare entirely; the sandbox shares the
+    ///     host's network stack. Landlock + seccomp still apply.
+    ///   * `pasta` — sentinel; same effect as `none` today but enables a
+    ///     documented wrapper pattern where the user invokes sandkasten
+    ///     via `pasta --config-net --ns-user <sk-bin> …`.
+    pub external: Option<String>,
+
+    /// Join an existing network namespace instead of creating a new one.
+    /// Path must be a netns file descriptor — typically
+    /// `/run/netns/<name>` created by `ip netns add <name>`, or
+    /// `/proc/<pid>/ns/net` for an existing process's netns. Linux only.
+    ///
+    /// Pattern for routing sandboxed traffic through a VPN:
+    ///   `ip netns add vpn`
+    ///   `ip netns exec vpn wg-quick up wg0`    # or openvpn, etc.
+    ///   Then set `netns_path = "/run/netns/vpn"` in the profile.
+    /// Every outbound connection from the sandbox follows the VPN's routes.
+    pub netns_path: Option<String>,
+
     /// Force the sandbox through an outbound HTTP(S) proxy. Sets
     /// `HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` / `https_proxy` /
     /// `ALL_PROXY` / `NO_PROXY` env vars, and optionally restricts
@@ -748,6 +770,14 @@ impl Profile {
         }
         out.network.redirects.extend(self.network.redirects);
         out.network.blocks.extend(self.network.blocks);
+        // External / netns integration.
+        if self.network.external.is_some() {
+            out.network.external = self.network.external;
+        }
+        if self.network.netns_path.is_some() {
+            out.network.netns_path = self.network.netns_path;
+        }
+
         // Proxy settings: child scalars win.
         if self.network.proxy.url.is_some() {
             out.network.proxy.url = self.network.proxy.url;

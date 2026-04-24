@@ -173,6 +173,41 @@ Applied via nftables DNAT inside the sandbox's private netns. The host's
 network stack is untouched. For hostname-based apps, prefer
 `[network.hosts_entries]` — it works cross-platform and survives TLS SNI.
 
+### Route sandboxed traffic through a VPN (Linux)
+
+sandkasten can **join an existing network namespace** instead of creating
+its own. If you've set up WireGuard (or OpenVPN, or any tunnel) in a
+named netns, point the profile at it and every byte the sandbox sends
+rides the tunnel:
+
+```sh
+# one-off setup (root, host)
+ip netns add vpn
+ip link add wg0 type wireguard
+ip link set wg0 netns vpn
+ip netns exec vpn wg setconf wg0 /etc/wireguard/wg0.conf
+ip netns exec vpn ip addr add 10.0.0.2/24 dev wg0
+ip netns exec vpn ip link set wg0 up
+ip netns exec vpn ip route add default dev wg0
+```
+
+```toml
+# profile.toml
+[network]
+netns_path = "/run/netns/vpn"
+allow_dns = true
+outbound_tcp = ["*:443"]
+```
+
+```sh
+sandkasten run profile.toml -- curl https://ifconfig.me
+# → reports the VPN endpoint's IP, not yours
+```
+
+Sandbox applies as usual on top — Landlock, seccomp, resource limits —
+but the kernel routes `connect()` through the VPN. No LD_PRELOAD, no
+userspace proxy. Per-IP nftables rules inside this netns still work.
+
 ### Controlled hardware identity for testing
 
 A compatibility test suite wants to see a specific CPU, machine-id, DMI
