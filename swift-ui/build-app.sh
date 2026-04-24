@@ -36,6 +36,34 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_DIR}/Contents/MacOS/${BUNDLE_NAME}"
 
+# Embed the `sandkasten` CLI next to the UI binary so the .app is
+# self-contained — `open`-launched apps get no $PATH, so this avoids
+# "sandkasten not found" errors. Probe candidate paths in order.
+CLI=""
+for candidate in \
+    "../target/release/sandkasten" \
+    "$(which sandkasten 2>/dev/null)" \
+    "/opt/homebrew/bin/sandkasten" \
+    "/usr/local/bin/sandkasten" \
+; do
+    if [ -n "${candidate}" ] && [ -x "${candidate}" ]; then
+        CLI="${candidate}"
+        break
+    fi
+done
+
+if [ -n "${CLI}" ]; then
+    # Install under Contents/Resources/ — macOS default filesystems are
+    # case-insensitive, so `Contents/MacOS/sandkasten` would collide
+    # with the UI's binary `Sandkasten` on the same path.
+    cp "${CLI}" "${APP_DIR}/Contents/Resources/sandkasten"
+    chmod +x "${APP_DIR}/Contents/Resources/sandkasten"
+    echo "  ✓ embedded CLI from ${CLI} → Contents/Resources/sandkasten"
+else
+    echo "  ! no sandkasten CLI found to embed — the app will fall back"
+    echo "    to \$PATH / Homebrew / dev paths at runtime."
+fi
+
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"

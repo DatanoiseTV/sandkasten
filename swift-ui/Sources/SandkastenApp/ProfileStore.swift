@@ -23,20 +23,28 @@ final class ProfileStore: ObservableObject {
     @Published var pendingError: String?
     @Published var newProfilePromptVisible: Bool = false
 
-    /// Resolved path to the `sandkasten` CLI. First checks $PATH, then
-    /// falls back to the repo's `target/release` sibling.
+    /// Resolved path to the `sandkasten` CLI. Falls back through bundled
+    /// binary, $PATH, Homebrew, and repo checkout — see `resolveCLI`.
     @Published var cliPath: String = ProfileStore.resolveCLI()
 
     private var cancellables = Set<AnyCancellable>()
 
     init() {
         reload()
-        // When selection changes, load that profile.
         $selectedID
             .removeDuplicates()
             .sink { [weak self] id in
                 guard let self = self, let id = id else { return }
                 self.openSelected(id: id)
+            }
+            .store(in: &cancellables)
+
+        // Persist cli-path edits so the user only has to set it once.
+        $cliPath
+            .removeDuplicates()
+            .dropFirst()
+            .sink { value in
+                UserDefaults.standard.set(value, forKey: "cliPath")
             }
             .store(in: &cancellables)
     }
@@ -51,29 +59,56 @@ final class ProfileStore: ObservableObject {
     }
 
     private static func resolveCLI() -> String {
-        // $PATH
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in path.split(separator: ":") {
-                let p = "\(dir)/sandkasten"
-                if FileManager.default.isExecutableFile(atPath: p) {
-                    return p
-                }
-            }
+        let fm = FileManager.default
+
+        // 1. User override persisted in UserDefaults.
+        if let override = UserDefaults.standard.string(forKey: "cliPath"),
+           !override.isEmpty,
+           fm.isExecutableFile(atPath: override)
+        {
+            return override
         }
-        // Development fallback: <repo>/target/release/sandkasten
-        let cwd = FileManager.default.currentDirectoryPath
-        let candidates = [
+
+        // 2. Bundled CLI inside this .app's Resources/. build-app.sh
+        //    installs it there — we can't use Contents/MacOS/ because the
+        //    UI's own binary `Sandkasten` case-collides with `sandkasten`
+        //    on case-insensitive macOS filesystems.
+        if let bundled = Bundle.main.url(forResource: "sandkasten", withExtension: nil),
+           fm.isExecutableFile(atPath: bundled.path)
+        {
+            return bundled.path
+        }
+
+        // 3. $PATH. When the app is launched from Finder via `open`, PATH
+        //    is typically `/usr/bin:/bin:/usr/sbin:/sbin` and misses
+        //    Homebrew. We also probe the canonical Homebrew locations
+        //    directly as a fallback.
+        let pathEnv = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        var dirs = pathEnv.split(separator: ":").map(String.init)
+        dirs.append(contentsOf: [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/opt/local/bin",
+        ])
+        for dir in dirs {
+            let p = "\(dir)/sandkasten"
+            if fm.isExecutableFile(atPath: p) { return p }
+        }
+
+        // 4. Development fallback — sibling of the repo checkout.
+        let cwd = fm.currentDirectoryPath
+        for p in [
             "\(cwd)/target/release/sandkasten",
             "\(cwd)/../target/release/sandkasten",
-            "/usr/local/bin/sandkasten",
-            "/opt/homebrew/bin/sandkasten",
-        ]
-        for p in candidates {
-            if FileManager.default.isExecutableFile(atPath: p) {
-                return p
-            }
+            NSHomeDirectory() + "/dev/priv/sandkasten/target/release/sandkasten",
+        ] {
+            if fm.isExecutableFile(atPath: p) { return p }
         }
-        return "sandkasten"   // let the user see the error when we run it
+
+        // Nothing found — return the bare name so the error surfaces
+        // once the user tries an operation.
+        return "sandkasten"
     }
 
     // ─── listing ───────────────────────────────────────────
