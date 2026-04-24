@@ -1,0 +1,5 @@
+/.build
+/icon/AppIcon.iconset
+.DS_Store
+*.xcodeproj
+/Package.resolved
