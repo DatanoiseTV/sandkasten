@@ -58,6 +58,33 @@ pub enum Command {
         profile: String,
     },
 
+    /// Drop into an interactive shell inside the sandbox. The child sees
+    /// `$SANDKASTEN_PROFILE` set to the active profile name so you can
+    /// reference it from `PS1`.
+    Shell {
+        /// Profile to apply.
+        profile: String,
+        /// Override the shell (default: `$SHELL`, falling back to `/bin/bash`).
+        #[arg(long)]
+        shell: Option<String>,
+        /// Override working directory.
+        #[arg(long, short = 'C')]
+        cwd: Option<PathBuf>,
+    },
+
+    /// Structural diff between two profiles — what each grants that the other
+    /// does not. Works with built-in names, paths, and user profiles.
+    Diff {
+        left: String,
+        right: String,
+    },
+
+    /// Plain-English explanation of what a profile allows and denies. Great
+    /// for reviewing an unfamiliar profile before running untrusted code.
+    Explain {
+        profile: String,
+    },
+
     /// Write a starter profile to disk.
     Init {
         /// Template to start from.

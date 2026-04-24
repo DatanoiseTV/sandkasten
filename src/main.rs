@@ -18,6 +18,7 @@ use std::process::ExitCode;
 
 mod cli;
 mod config;
+mod explain;
 mod learn_core;
 mod limits;
 #[macro_use]
@@ -146,6 +147,12 @@ fn run(args: cli::Cli) -> Result<i32> {
             let p = config::finalize(raw, &ctx)?;
             let rendered = render_policy(&p)?;
             print!("{rendered}");
+            // Reproducibility hash: first-12 hex of FNV-1a over the rendered
+            // bytes, printed as a trailing line so diffs of policy drift are
+            // visible. (FNV-1a keeps our dep list short; swap for SHA-256
+            // later if users ask for collision resistance.)
+            let h = fnv1a(rendered.as_bytes());
+            println!(";; policy-hash: {:016x}", h);
             Ok(0)
         }
         cli::Command::List => {
@@ -167,6 +174,65 @@ fn run(args: cli::Cli) -> Result<i32> {
         } => run_learn(&base, output, auto_system, cwd.as_deref(), &argv),
         cli::Command::Ui { port, no_open } => {
             ui::run(port, !no_open)?;
+            Ok(0)
+        }
+        cli::Command::Shell { profile, shell, cwd } => {
+            let raw = config::load(&profile)?;
+            let ctx = config::ExpandContext::detect(None)?;
+            let mut prof = config::finalize(raw, &ctx)?;
+            let sh = shell
+                .or_else(|| std::env::var("SHELL").ok())
+                .unwrap_or_else(|| "/bin/bash".to_string());
+            // Tell the shell which sandbox it's in so users can customise PS1.
+            prof.env.set.insert(
+                "SANDKASTEN_PROFILE".into(),
+                prof.name.clone().unwrap_or_else(|| profile.clone()),
+            );
+            // Materialise mocks + workspace like `run` does.
+            let mock_handle = mocks::materialise(&mut prof)?;
+            if let Some(m) = &mock_handle {
+                prof.env.set.insert(m.env_var.0.clone(), m.env_var.1.clone());
+            }
+            let mut effective_cwd = cwd;
+            if let Some(ws_path) = prof.workspace.path.clone() {
+                let ws = PathBuf::from(&ws_path);
+                std::fs::create_dir_all(&ws)
+                    .with_context(|| format!("creating workspace {}", ws.display()))?;
+                if !prof.filesystem.read_write.iter().any(|p| p == &ws_path) {
+                    prof.filesystem.read_write.push(ws_path.clone());
+                }
+                prof.env.set.insert("SANDKASTEN_WORKSPACE".into(), ws_path);
+                if prof.workspace.chdir && effective_cwd.is_none() {
+                    effective_cwd = Some(ws);
+                }
+            }
+            log::info(format_args!(
+                "profile={:?} shell={} cwd={}",
+                prof.name.as_deref().unwrap_or("?"),
+                sh,
+                effective_cwd
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| ctx.cwd.display().to_string())
+            ));
+            log::print_summary(&prof);
+            let rc = run_sandboxed(&prof, effective_cwd.as_deref(), &[sh]);
+            if let Some(m) = mock_handle {
+                let _ = std::fs::remove_dir_all(&m.dir);
+            }
+            rc
+        }
+        cli::Command::Diff { left, right } => {
+            let ctx = config::ExpandContext::detect(None)?;
+            let lp = config::finalize(config::load(&left)?, &ctx)?;
+            let rp = config::finalize(config::load(&right)?, &ctx)?;
+            print!("{}", explain::diff(&lp, &rp));
+            Ok(0)
+        }
+        cli::Command::Explain { profile } => {
+            let ctx = config::ExpandContext::detect(None)?;
+            let p = config::finalize(config::load(&profile)?, &ctx)?;
+            print!("{}", explain::explain(&p));
             Ok(0)
         }
         cli::Command::Verify { profile } => {
@@ -303,6 +369,20 @@ fn parse_duration_seconds(s: &str) -> Result<u64> {
         .map_err(|_| anyhow!("invalid duration {s:?} (expected e.g. 30s, 5m, 2h)"))?;
     n.checked_mul(mult)
         .ok_or_else(|| anyhow!("duration overflow: {s}"))
+}
+
+/// 64-bit FNV-1a hash. Cheap, no-deps, stable. We use it for the policy-hash
+/// fingerprint printed by `render` so users can store the expected hash in
+/// their profile or CI config and detect drift.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut h = OFFSET;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(PRIME);
+    }
+    h
 }
 
 fn list_profiles() {

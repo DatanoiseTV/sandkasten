@@ -81,7 +81,26 @@ sandkasten learn [--base <tpl>] [-o <out.toml>] [--auto-system] -- <cmd> [args..
 
 sandkasten ui [--port 4173]
   Opens a local web UI for browsing and editing profiles (see UI section).
+
+sandkasten shell <profile> [--shell /bin/zsh] [-C <cwd>]
+  Drop into an interactive sandboxed shell. `$SANDKASTEN_PROFILE` is set
+  so you can customise `PS1`, e.g.
+    PS1='[sandkasten:$SANDKASTEN_PROFILE] \w \$ '
+
+sandkasten diff <left> <right>
+  Structural diff between two profiles — what each grants that the other
+  does not. Built-in names, paths, and user profiles all work.
+
+sandkasten explain <profile>
+  Plain-English summary of what a profile allows, denies, and limits.
+  Deterministic; no AI. Great for reviewing an unfamiliar profile before
+  running untrusted code through it.
 ```
+
+`render` also emits a trailing `;; policy-hash: <16-hex>` fingerprint
+(64-bit FNV-1a over the full rendered policy). Stash it in CI to detect
+policy drift — if the hash of a regenerated policy differs from a pinned
+one, something changed.
 
 Verbosity:
 
@@ -452,8 +471,13 @@ Shipping honestly so nobody gets surprised:
       HTTP(S) / QUIC / RTP / SIP / STUN / WebRTC / SSH / databases /
       mail / chat / NTP / mDNS — ~35 named presets that expand into
       concrete TCP/UDP rules
+- [x] `sandkasten shell / diff / explain` — interactive sandboxed shell,
+      structural profile diffs, plain-English policy explanations
+- [x] Reproducibility fingerprint in `render` output
 - [ ] Bundled `pasta` / `slirp4netns` integration for turnkey outbound
 - [ ] Transparent mock interposition via LD_PRELOAD / DYLD_INSERT_LIBRARIES
+- [ ] Snapshot / restore of the overlayfs upper layer (Linux "time travel")
+- [ ] Live policy tightening (SIGHUP reloads; sandbox_init only narrows)
 - [ ] Homebrew tap
 
 ## License
