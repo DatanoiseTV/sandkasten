@@ -87,10 +87,46 @@ fn apply_serial(p: &mut Profile) {
 fn apply_audio(p: &mut Profile) {
     #[cfg(target_os = "linux")]
     {
+        // ALSA raw device nodes.
         add_rw(p, "/dev/snd");
-        // PulseAudio/PipeWire socket lives under /run/user/<uid>/.
+
+        // Shared memory — JACK, GStreamer, PipeWire all use it. POSIX shm
+        // objects live under /dev/shm; SysV IPC controllers are covered
+        // by allow_ipc below.
+        add_rw(p, "/dev/shm");
+        p.system.allow_ipc = true;
+
+        // PulseAudio native socket: /run/user/<uid>/pulse/native
+        // PipeWire socket:          /run/user/<uid>/pipewire-0
+        // $XDG_RUNTIME_DIR is usually /run/user/<uid>, so granting the
+        // parent covers both.
         add_rw(p, "/run/user");
+
+        // Pulse/Pipewire read configs from /etc + ~/.config
+        add_r(p, "/etc/pulse");
+        add_r(p, "/etc/pipewire");
+        add_r(p, "/etc/asound.conf");
+        add_r(p, "/usr/share/alsa");
+        add_r(p, "/usr/share/pulseaudio");
+        add_r(p, "/usr/share/pipewire");
         add_r(p, "/sys/class/sound");
+        add_r(p, "/proc/asound");
+
+        // Client-side config.
+        for home_rel in [".config/pulse", ".config/pipewire",
+                         ".config/alsa", ".asoundrc"] {
+            if let Some(h) = dirs::home_dir() {
+                let full = h.join(home_rel);
+                let s = full.to_string_lossy().into_owned();
+                if home_rel == ".asoundrc" || home_rel.starts_with(".config/") {
+                    // Caches/state can be read-only; Pulse writes
+                    // $XDG_RUNTIME_DIR not $HOME/.config.
+                    add_r(p, &s);
+                }
+            }
+        }
+
+        // Unix-domain sockets for Pulse/Pipewire/JACK IPC.
         p.network.allow_unix_sockets = true;
     }
     #[cfg(target_os = "macos")]
@@ -99,6 +135,10 @@ fn apply_audio(p: &mut Profile) {
         add_mach(p, "com.apple.audio.coreaudiod");
         add_mach(p, "com.apple.audio.audiohald");
         add_mach(p, "com.apple.audio.SystemSoundServer-OSX");
+        add_mach(p, "com.apple.audio.AudioQueueServer");
+        add_mach(p, "com.apple.audio.DriverHelper");
+        add_mach(p, "com.apple.audio.AudioSession");
+        add_mach(p, "com.apple.midiserver");
     }
 }
 
