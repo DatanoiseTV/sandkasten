@@ -585,6 +585,7 @@ impl Process {
 /// builds, Linux package-manager paths, Snap, and Linuxbrew. Expand with
 /// care — every entry here becomes a `deny process-exec` on macOS (and
 /// matters only if the binary exists, so extras are free defense).
+#[allow(dead_code)] // consumed only by the macOS SBPL generator today
 pub const PRIVILEGE_ELEVATION_BINARIES: &[&str] = &[
     // Standard *nix system paths — present on both macOS (as Apple
     // binaries) and on every Linux distro.
