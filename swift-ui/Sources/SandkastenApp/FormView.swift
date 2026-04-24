@@ -31,6 +31,9 @@ struct FormView: View {
                 if let err = store.parseError {
                     TomlParseError(message: err)
                 }
+                if !store.profile.parseWarnings.isEmpty {
+                    TomlParseWarnings(messages: store.profile.parseWarnings)
+                }
 
                 IdentitySection()
                 FilesystemSection()
@@ -64,6 +67,7 @@ private struct TomlParseError: View {
                 Text(message)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
         .padding(12)
@@ -74,6 +78,36 @@ private struct TomlParseError: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.4), lineWidth: 1)
+        )
+    }
+}
+
+private struct TomlParseWarnings: View {
+    let messages: [String]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(.yellow)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Some sections couldn't be parsed — they've been reset to defaults. The rest of the profile loaded fine.")
+                    .font(.callout.weight(.medium))
+                ForEach(messages, id: \.self) { m in
+                    Text(m)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.yellow.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.yellow.opacity(0.4), lineWidth: 1)
         )
     }
 }

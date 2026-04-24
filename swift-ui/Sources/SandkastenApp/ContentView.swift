@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: ProfileStore
-    @State private var selectedTab: DetailTab = .policy
+    @State private var selectedTab: DetailTab = .form
     @State private var duplicateDialog: Bool = false
 
     var body: some View {

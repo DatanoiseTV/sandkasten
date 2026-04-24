@@ -23,6 +23,88 @@ struct Profile: Codable, Equatable {
     var hardware = Hardware()
     var spoof = Spoof()
 
+    /// Diagnostics collected during parse. Empty on clean parse. We include
+    /// section-level messages so the UI can point at where the problem is
+    /// without losing the rest of the profile.
+    var parseWarnings: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, `extends`
+        case filesystem, network, process, system, env
+        case limits, mocks, workspace, overlay, hardware, spoof
+    }
+
+    init() {}
+
+    /// Resilient decode: one bad section doesn't void the whole profile.
+    /// Each section is tried independently; failures are collected into
+    /// `parseWarnings` so the UI can surface exactly what went wrong
+    /// without blanking out the form.
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        // top-level strings — these are safe to decode directly.
+        name        = try c.decodeIfPresent(String.self, forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        extends     = try c.decodeIfPresent(String.self, forKey: .extends)
+
+        // Collect warnings into a local, then assign to self once at the
+        // end — avoids an exclusive-access conflict with the inout refs.
+        var warns: [String] = []
+        filesystem = Self.section(c, .filesystem, "filesystem", fallback: Filesystem(), warns: &warns)
+        network    = Self.section(c, .network,    "network",    fallback: Network(),    warns: &warns)
+        process    = Self.section(c, .process,    "process",    fallback: ProcessSection(), warns: &warns)
+        system     = Self.section(c, .system,     "system",     fallback: SystemSection(),  warns: &warns)
+        env        = Self.section(c, .env,        "env",        fallback: Env(),        warns: &warns)
+        limits     = Self.section(c, .limits,     "limits",     fallback: Limits(),     warns: &warns)
+        mocks      = Self.section(c, .mocks,      "mocks",      fallback: Mocks(),      warns: &warns)
+        workspace  = Self.section(c, .workspace,  "workspace",  fallback: Workspace(),  warns: &warns)
+        overlay    = Self.section(c, .overlay,    "overlay",    fallback: Overlay(),    warns: &warns)
+        hardware   = Self.section(c, .hardware,   "hardware",   fallback: Hardware(),   warns: &warns)
+        spoof      = Self.section(c, .spoof,      "spoof",      fallback: Spoof(),      warns: &warns)
+        self.parseWarnings = warns
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(name,        forKey: .name)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(`extends`,   forKey: .extends)
+
+        // Only write sections that differ from their defaults, so the
+        // emitted TOML looks like what a human would hand-write.
+        if filesystem != Filesystem() { try c.encode(filesystem, forKey: .filesystem) }
+        if network    != Network()    { try c.encode(network,    forKey: .network) }
+        if process    != ProcessSection() { try c.encode(process, forKey: .process) }
+        if system     != SystemSection()  { try c.encode(system,  forKey: .system) }
+        if env        != Env()        { try c.encode(env,        forKey: .env) }
+        if limits     != Limits()     { try c.encode(limits,     forKey: .limits) }
+        if mocks      != Mocks()      { try c.encode(mocks,      forKey: .mocks) }
+        if workspace  != Workspace()  { try c.encode(workspace,  forKey: .workspace) }
+        if overlay    != Overlay()    { try c.encode(overlay,    forKey: .overlay) }
+        if hardware   != Hardware()   { try c.encode(hardware,   forKey: .hardware) }
+        if spoof      != Spoof()      { try c.encode(spoof,      forKey: .spoof) }
+    }
+
+    private static func section<T: Codable>(
+        _ c: KeyedDecodingContainer<CodingKeys>,
+        _ key: CodingKeys,
+        _ name: String,
+        fallback: T,
+        warns: inout [String]
+    ) -> T {
+        do {
+            if let v = try c.decodeIfPresent(T.self, forKey: key) {
+                return v
+            }
+            return fallback
+        } catch {
+            warns.append("[\(name)]: \(error.localizedDescription)")
+            return fallback
+        }
+    }
+
     // ── serialize ────────────────────────────────────────────────────
     func toTOML() throws -> String {
         try TOMLEncoder().encode(self)
