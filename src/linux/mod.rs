@@ -212,8 +212,14 @@ pub(super) enum NetKind {
     /// Private netns + pasta (from passt) provides external connectivity.
     /// nftables applies safely inside pasta's netns.
     PastaWrap,
-    /// Host netns (fallback when pasta isn't installed, or
-    /// `external = "host"`, or an inbound listener is configured).
+    /// Private netns + slirp4netns attached from outside. Used when
+    /// pasta is restricted by AppArmor (Debian/Ubuntu) but
+    /// slirp4netns is installed. Requires the fork-before-unshare
+    /// dance — see `isolate::run_slirp4netns`.
+    Slirp4netnsWrap,
+    /// Host netns (fallback when neither pasta nor slirp4netns is
+    /// available, or `external = "host"`, or an inbound listener is
+    /// configured).
     HostShared,
     /// `setns()` into an existing netns (user-plumbed via
     /// `[network.netns_path]`).
@@ -225,8 +231,37 @@ pub(super) enum NetKind {
 /// netns and shouldn't try to `CLONE_NEWNET` again.
 const PASTA_ENV_MARKER: &str = "SANDKASTEN_PASTA_WRAPPED";
 
+/// Env var set by the slirp4netns-flow parent before the child
+/// continues its in-process sandbox setup, signalling "the namespace
+/// has already been unshared and the uid/gid maps have already been
+/// written from outside".
+pub(super) const SLIRP_ENV_MARKER: &str = "SANDKASTEN_SLIRP_PLUMBED";
+
 pub(super) fn already_in_pasta() -> bool {
     std::env::var_os(PASTA_ENV_MARKER).is_some()
+}
+
+pub(super) fn already_slirp_plumbed() -> bool {
+    std::env::var_os(SLIRP_ENV_MARKER).is_some()
+}
+
+pub(super) fn find_slirp4netns() -> Option<std::path::PathBuf> {
+    for dir in std::env::var("PATH").unwrap_or_default().split(':') {
+        let p = std::path::Path::new(dir).join("slirp4netns");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    for p in [
+        "/usr/bin/slirp4netns",
+        "/usr/local/bin/slirp4netns",
+        "/usr/sbin/slirp4netns",
+    ] {
+        if std::path::Path::new(p).is_file() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    None
 }
 
 fn find_pasta() -> Option<std::path::PathBuf> {
@@ -384,11 +419,24 @@ pub(super) fn net_mode(p: &Profile) -> NetMode {
                 kind: NetKind::PastaWrap,
             };
         }
+        // Pasta blocked or missing. slirp4netns is the second-best
+        // choice — uses the same userspace TAP model, attaches via
+        // PID instead of execing, and isn't confined by Debian's
+        // AppArmor profile.
+        if find_slirp4netns().is_some() {
+            return NetMode {
+                unshare_net: true,
+                bring_up_lo: p.network.allow_localhost,
+                label:
+                    "private netns + slirp4netns (external connectivity plumbed; nftables applies)",
+                kind: NetKind::Slirp4netnsWrap,
+            };
+        }
         let label = if apparmor_restricts_passt() {
-            "host netns fallback (AppArmor `passt` profile blocks our exec path — \
-             disable the profile or use [network.netns_path] for per-IP isolation)"
+            "host netns fallback (AppArmor `passt` profile blocks pasta; install \
+             `slirp4netns` for per-IP isolation or use [network.netns_path])"
         } else {
-            "host netns fallback (install `passt` for per-IP isolation)"
+            "host netns fallback (install `passt` or `slirp4netns` for per-IP isolation)"
         };
         return NetMode {
             unshare_net: false,

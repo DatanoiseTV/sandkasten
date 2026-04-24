@@ -23,28 +23,57 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
         return super::exec_under_pasta(&net, argv, cwd);
     }
 
+    // slirp4netns alternative path: used when pasta is blocked (e.g.
+    // Debian's AppArmor profile). Requires a fork-before-unshare dance
+    // so a parent process outside our userns can spawn slirp4netns
+    // attached to our netns from the host side. See [`run_slirp4netns`]
+    // for details.
+    if matches!(net.kind, super::NetKind::Slirp4netnsWrap) && !super::already_slirp_plumbed() {
+        return run_slirp4netns(profile, cwd, argv);
+    }
+
+    run_unshared(profile, cwd, argv, &net)
+}
+
+fn run_unshared(
+    profile: &Profile,
+    cwd: Option<&Path>,
+    argv: &[String],
+    net: &super::NetMode,
+) -> Result<i32> {
     // Stage 1: enter user namespace. Other namespaces unshared together so
     // uid_map writes happen exactly once.
     let uid = nix::unistd::geteuid().as_raw();
     let gid = nix::unistd::getegid().as_raw();
 
-    let mut flags = CloneFlags::CLONE_NEWUSER
-        | CloneFlags::CLONE_NEWNS
-        | CloneFlags::CLONE_NEWPID
-        | CloneFlags::CLONE_NEWIPC
-        | CloneFlags::CLONE_NEWUTS;
-    // When pasta already put us in a private netns, skip CLONE_NEWNET —
-    // we want to inherit the pasta-plumbed netns, not unshare into a
-    // fresh empty one.
-    if net.unshare_net && !super::already_in_pasta() {
-        flags |= CloneFlags::CLONE_NEWNET;
-    }
-    unshare(flags).context("unshare (is unprivileged_userns_clone enabled?)")?;
+    // slirp4netns flow: the outer parent already forked us INTO
+    // unshared namespaces AND wrote our uid/gid maps from outside. Skip
+    // both steps in that case — calling unshare again would fail, and
+    // writing the already-set uid_map is illegal (kernel returns EPERM).
+    let slirp_already_set = super::already_slirp_plumbed();
+    let pasta_already_set = super::already_in_pasta();
 
-    // Map our uid/gid to 0 inside the new user namespace.
-    write_map("/proc/self/setgroups", b"deny\n").context("setgroups deny")?;
-    write_map("/proc/self/uid_map", format!("0 {uid} 1\n").as_bytes()).context("uid_map")?;
-    write_map("/proc/self/gid_map", format!("0 {gid} 1\n").as_bytes()).context("gid_map")?;
+    if !slirp_already_set {
+        let mut flags = CloneFlags::CLONE_NEWUSER
+            | CloneFlags::CLONE_NEWNS
+            | CloneFlags::CLONE_NEWPID
+            | CloneFlags::CLONE_NEWIPC
+            | CloneFlags::CLONE_NEWUTS;
+        // When pasta already put us in a private netns, skip
+        // CLONE_NEWNET — we want to inherit the plumbed netns, not
+        // unshare into a fresh empty one.
+        if net.unshare_net && !pasta_already_set {
+            flags |= CloneFlags::CLONE_NEWNET;
+        }
+        unshare(flags).context("unshare (is unprivileged_userns_clone enabled?)")?;
+
+        // Map our uid/gid to 0 inside the new user namespace.
+        write_map("/proc/self/setgroups", b"deny\n").context("setgroups deny")?;
+        write_map("/proc/self/uid_map", format!("0 {uid} 1\n").as_bytes()).context("uid_map")?;
+        write_map("/proc/self/gid_map", format!("0 {gid} 1\n").as_bytes()).context("gid_map")?;
+    }
+    let _ = uid;
+    let _ = gid;
 
     // Optional: join an existing network namespace (e.g. one set up by the
     // user with `ip netns add vpn; ip netns exec vpn wg-quick up wg0`).
@@ -93,7 +122,7 @@ pub fn run(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32
         ForkResult::Child => {
             let rc = child_main(
                 profile,
-                &net,
+                net,
                 cwd_c.as_deref(),
                 &resolved,
                 &c_args,
@@ -192,6 +221,150 @@ fn child_main(
     let envp_ref: Vec<&std::ffi::CStr> = envp.iter().map(|c| c.as_c_str()).collect();
     execve(prog, &argv_ref, &envp_ref).context("execve")?;
     unreachable!()
+}
+
+/// Fork-before-unshare flow for slirp4netns plumbing.
+///
+/// The problem we're solving: `slirp4netns --configure $PID tap0` needs
+/// to run *outside* the target's user namespace (so it keeps its host
+/// capabilities and can open a /dev/net/tun fd), but the netns it
+/// attaches to has to already exist. Pasta's `--netns PATH` mode hits
+/// the same wall we saw with Debian's AppArmor profile — but
+/// slirp4netns isn't confined, so if we set up the fork/wait dance
+/// correctly it just works.
+///
+/// Flow:
+///   1. pipe(ready_r, ready_w) — parent→child "proceed" signal.
+///   2. fork().
+///   3. Child: unshare(NEWUSER|NEWNET|...), wait on ready_r. setgroups/
+///      uid_map/gid_map are written by the *parent* from outside our
+///      userns; we don't touch them ourselves.
+///   4. Parent: write the child's setgroups/uid_map/gid_map (allowed
+///      because we're the parent process), spawn slirp4netns -c <child>
+///      tap0, kick ready_w, then waitpid(child).
+///   5. Child wakes up, continues the normal post-unshare flow (reusing
+///      `run_unshared` with a marker that says "ns + maps already done").
+///   6. When child exits, parent reaps it, terminates slirp4netns, and
+///      returns the child's exit code.
+fn run_slirp4netns(profile: &Profile, cwd: Option<&Path>, argv: &[String]) -> Result<i32> {
+    use nix::unistd::pipe;
+
+    let slirp = super::find_slirp4netns()
+        .ok_or_else(|| anyhow!("slirp4netns binary disappeared between check and exec"))?;
+    let (ready_r, ready_w) = pipe().context("pipe")?;
+    let uid = nix::unistd::geteuid().as_raw();
+    let gid = nix::unistd::getegid().as_raw();
+
+    // SAFETY: fork from a single-threaded context (sandkasten is
+    // single-threaded before this point).
+    match unsafe { fork() }.context("fork")? {
+        ForkResult::Child => {
+            drop(ready_w);
+            let flags = CloneFlags::CLONE_NEWUSER
+                | CloneFlags::CLONE_NEWNS
+                | CloneFlags::CLONE_NEWPID
+                | CloneFlags::CLONE_NEWIPC
+                | CloneFlags::CLONE_NEWUTS
+                | CloneFlags::CLONE_NEWNET;
+            if let Err(e) = unshare(flags) {
+                eprintln!("sandkasten: slirp4netns child unshare failed: {e}");
+                // SAFETY: _exit terminates this child immediately; no
+                // destructors/atexits must run after fork's midway state.
+                unsafe { libc::_exit(127) };
+            }
+            // Wait for parent: 1 byte = "maps + slirp4netns ready".
+            let mut buf = [0u8; 1];
+            if let Err(e) = nix::unistd::read(&ready_r, &mut buf) {
+                eprintln!("sandkasten: slirp4netns child read sync failed: {e}");
+                // SAFETY: _exit terminates this child immediately; no
+                // destructors/atexits must run after fork's midway state.
+                unsafe { libc::_exit(127) };
+            }
+            drop(ready_r);
+            // Mark the env so the recursive `run()` knows to skip both
+            // the unshare (we've already done it) AND the uid_map write
+            // (the parent did it from outside).
+            // SAFETY: single-threaded between fork and execve.
+            unsafe {
+                std::env::set_var(super::SLIRP_ENV_MARKER, "1");
+            }
+            // Re-enter the main flow. run_unshared will detect the
+            // marker via `already_slirp_plumbed()` and handle it
+            // correctly: skip CLONE_NEWNET (done), skip uid_map writes
+            // (done — our own /proc/self/uid_map is read-only after
+            // the parent wrote it), set hostname, build argv, fork
+            // the sandboxed grandchild, run Landlock + seccomp + exec.
+            let code = match run_slirp_child_after_unshare(profile, cwd, argv) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("sandkasten: slirp4netns child flow failed: {e:#}");
+                    127
+                }
+            };
+            // SAFETY: _exit terminates this child without running
+            // destructors; we're between fork and the intended execve.
+            unsafe { libc::_exit(code) };
+        }
+        ForkResult::Parent { child } => {
+            drop(ready_r);
+            let cpid = child.as_raw();
+            // Wait briefly for the child to actually enter the userns
+            // before we try to write its map files. The usual trick is
+            // to poll on /proc/<pid>/uid_map with a short sleep; it's
+            // zero-length but readable immediately after CLONE_NEWUSER.
+            // 50ms is plenty in practice; bump if flaky.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::fs::write(format!("/proc/{cpid}/setgroups"), b"deny\n")
+                .with_context(|| format!("writing /proc/{cpid}/setgroups"))?;
+            std::fs::write(format!("/proc/{cpid}/uid_map"), format!("0 {uid} 1\n"))
+                .with_context(|| format!("writing /proc/{cpid}/uid_map"))?;
+            std::fs::write(format!("/proc/{cpid}/gid_map"), format!("0 {gid} 1\n"))
+                .with_context(|| format!("writing /proc/{cpid}/gid_map"))?;
+
+            // Spawn slirp4netns. `-c` brings the interface up in the
+            // target netns; `--disable-host-loopback` is a defensive
+            // touch — otherwise the sandboxed process could reach the
+            // host's 127.0.0.1 via slirp's NAT. Users who DO want that
+            // can set `network.allow_localhost` in the profile (handled
+            // by the bring_up_lo path elsewhere).
+            let mut slirp_child = std::process::Command::new(&slirp)
+                .args(["-c", "--disable-host-loopback", &cpid.to_string(), "tap0"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .with_context(|| format!("spawning {}", slirp.display()))?;
+
+            // Give slirp4netns ~200ms to finish configuring the netns.
+            // It prints "sent tapfd=N for tapX" to stderr when ready;
+            // we could sync on that but the cost of an unconditional
+            // sleep is trivial and avoids one more pipe.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            // Signal child: "proceed".
+            nix::unistd::write(&ready_w, b"x").context("signalling child")?;
+            drop(ready_w);
+
+            let rc = parent_wait(child, &profile.limits);
+
+            // Whether we succeeded or not, tear down slirp4netns.
+            let _ = slirp_child.kill();
+            let _ = slirp_child.wait();
+            rc
+        }
+    }
+}
+
+/// Child-side continuation after unshare inside the slirp4netns flow.
+/// The parent has written our setgroups/uid_map/gid_map, so we pick up
+/// from the existing `run_unshared` flow but with the namespace setup
+/// already done — `already_slirp_plumbed()` gates the skips inside it.
+fn run_slirp_child_after_unshare(
+    profile: &Profile,
+    cwd: Option<&Path>,
+    argv: &[String],
+) -> Result<i32> {
+    let net = super::net_mode(profile);
+    run_unshared(profile, cwd, argv, &net)
 }
 
 fn parent_wait(child: Pid, limits: &crate::config::Limits) -> Result<i32> {
