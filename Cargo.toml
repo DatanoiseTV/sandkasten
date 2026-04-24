@@ -26,7 +26,7 @@ toml = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
-nix = { version = "0.29", features = ["fs", "mount", "sched", "process", "user", "hostname", "signal", "socket", "net"] }
+nix = { version = "0.31", features = ["fs", "mount", "sched", "process", "user", "hostname", "signal", "socket", "net"] }
 seccompiler = "0.5"
 
 [profile.release]
