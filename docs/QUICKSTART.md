@@ -206,12 +206,21 @@ the search path under `<HOMEBREW_PREFIX>/share/sandkasten/profiles/`,
 so:
 
 ```sh
+# Auth: the profile hard-denies ~/Library/Keychains, so OAuth-tokens-
+# stored-in-Keychain agents (Claude Code, Cursor Agent, …) need the
+# model API key in the outer env. The profile's env.pass list
+# whitelists the major ones (ANTHROPIC_API_KEY, OPENAI_API_KEY, …).
+export ANTHROPIC_API_KEY="sk-ant-..."
+
 sandkasten run ai-agent -- claude        # ← bare name, no path needed
 sandkasten run ai-agent -- opencode
 
 # Alias so the original name "just works":
 alias claude='sandkasten run ai-agent -- claude'
 ```
+
+> If `claude` hangs at startup with no TUI, it's the Keychain gate —
+> set `ANTHROPIC_API_KEY` in the parent shell.
 
 For non-Homebrew installs, drop the bundled examples in once:
 

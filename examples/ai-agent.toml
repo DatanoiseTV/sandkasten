@@ -7,18 +7,48 @@
 # first set and hard-denies the second.
 #
 # Use:
-#     sandkasten run ./ai-agent.toml -- claude
-#     sandkasten run ./ai-agent.toml -- opencode
-#     sandkasten run ./ai-agent.toml -- aider
+#     sandkasten run ai-agent -- claude
+#     sandkasten run ai-agent -- opencode
+#     sandkasten run ai-agent -- aider
 #
 # Or as a shell alias:
-#     alias claude='sandkasten run /path/to/ai-agent.toml -- claude'
+#     alias claude='sandkasten run ai-agent -- claude'
 #
 # Anything the agent fork+exec's (npm, cargo, pytest, gh, …) inherits
 # the same sandbox — verified inheritance: PR_SET_NO_NEW_PRIVS keeps
 # seccomp + Landlock + capability drops sticky across exec; user/PID/
 # mount/net namespaces inherit by definition; macOS Seatbelt MACF
 # policy propagates to children automatically.
+#
+# ─── AUTHENTICATION ─────────────────────────────────────────────────
+#
+# This profile DENIES `~/Library/Keychains` so a compromised agent
+# can't walk away with your other apps' creds. That means agents that
+# default to storing their auth token in macOS Keychain (Claude Code,
+# Cursor Agent) need an alternative.
+#
+# Two paths that work, pick one:
+#
+#  (1) Environment variable — the cleanest. Set the model API key in
+#      your shell (or 1Password/pass shell-out) so it's already in the
+#      env when sandkasten forks. The profile's `env.pass` list
+#      whitelists ANTHROPIC_API_KEY, OPENAI_API_KEY, etc. through.
+#          export ANTHROPIC_API_KEY="sk-ant-..."
+#          sandkasten run ai-agent -- claude
+#
+#  (2) Pre-authenticate UNSANDBOXED, then loosen the deny — first run
+#      `claude` (or `opencode`, etc.) directly, complete the OAuth
+#      flow which writes the token to Keychain, then narrow this
+#      profile's `deny` list to just the OTHER apps' Keychain entries
+#      rather than the whole `~/Library/Keychains` directory. This
+#      requires per-app Keychain partitioning that's beyond what
+#      Seatbelt's path-based rules can express cleanly — usually (1)
+#      is the right choice.
+#
+# If `claude` appears to hang at startup with no TUI, it's almost
+# always the auth gate; check that ANTHROPIC_API_KEY is exported in
+# the parent shell. Run `sandkasten -vvv run ai-agent -- claude`
+# to see the kernel denial trace.
 
 name = "ai-agent"
 description = "Hardened sandbox for AI coding agents (Claude Code, opencode, aider, …). Read /, write project + agent state, outbound to model APIs + package registries, hard-deny secrets and sudo."
@@ -190,5 +220,9 @@ pass = [
 cpu_seconds          = 1800   # 30 min hard cap on a single run
 memory_mb            = 4096
 file_size_mb         = 256    # don't let it write a 10 GB file by accident
-processes            = 256
+# Bun-compiled agents (Claude Code's `claude` is one) spin up many
+# worker threads / cleanup hooks at session end. 256 was too tight
+# and surfaced as `EAGAIN: posix_spawn '/bin/sh'` from session-end
+# hook scripts on shutdown. 1024 leaves comfortable headroom.
+processes            = 1024
 wall_timeout_seconds = 3600   # 1 h

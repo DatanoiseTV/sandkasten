@@ -201,18 +201,34 @@ no more — and because sandbox restrictions inherit through `fork()`
 section), every shell command the agent kicks off lives inside the
 same sandbox automatically.
 
-A ready-made profile lives at [`examples/ai-agent.toml`](examples/ai-agent.toml):
+A ready-made profile lives at [`examples/ai-agent.toml`](examples/ai-agent.toml).
+On Homebrew installs it's already on the search path; on direct-
+install systems run `sandkasten install-profiles --user` once.
 
 ```sh
+# Set the model API key in your shell (NOT cached in Keychain — the
+# profile's hard-deny on ~/Library/Keychains is what stops an agent
+# from walking off with creds from your other apps).
+export ANTHROPIC_API_KEY="sk-ant-..."
+# or:
+export OPENAI_API_KEY="sk-..."
+
 # One-off launch:
-sandkasten run examples/ai-agent.toml -- claude
-sandkasten run examples/ai-agent.toml -- opencode
-sandkasten run examples/ai-agent.toml -- aider
+sandkasten run ai-agent -- claude
+sandkasten run ai-agent -- opencode
+sandkasten run ai-agent -- aider
 
 # Or alias it so the original command name "just works":
-alias claude='sandkasten run ~/path/to/ai-agent.toml -- claude'
-alias opencode='sandkasten run ~/path/to/ai-agent.toml -- opencode'
+alias claude='sandkasten run ai-agent -- claude'
+alias opencode='sandkasten run ai-agent -- opencode'
 ```
+
+> If `claude` (or any agent that defaults to OAuth → macOS Keychain)
+> hangs at startup with no TUI rendering, it's almost certainly the
+> auth gate: the agent is waiting on a Keychain lookup that's denied.
+> Set `ANTHROPIC_API_KEY` in the outer shell — the profile's
+> `env.pass` whitelist passes it through. Run
+> `sandkasten -vvv run ai-agent -- claude` to see kernel denials.
 
 What the profile (`extends = "minimal-cli"`) actually does:
 
