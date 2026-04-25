@@ -107,6 +107,33 @@ jobs:
           name: sbom
           path: sandkasten.cdx.json
 
+  fuzz:
+    name: Fuzz (libfuzzer-sys, brief)
+    runs-on: ubuntu-latest
+    # Continue main pipeline on a crash — the fuzz job uploads
+    # the artifact so it's investigable without blocking unrelated
+    # PRs. A crash in main will still mark the run red.
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      # 60s per target. PR-friendly cadence; the harness is also
+      # set up so contributors can run longer locally per the
+      # fuzz/README. Both targets are CPU-bound and self-contained.
+      - name: profile_parse
+        run: cargo fuzz run profile_parse fuzz/seeds/profile_parse -- -max_total_time=60
+      - name: parse_endpoint
+        run: cargo fuzz run parse_endpoint fuzz/seeds/parse_endpoint -- -max_total_time=60
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+
   linux-smoke:
     name: Linux (end-to-end sandbox smoke)
     needs: linux
