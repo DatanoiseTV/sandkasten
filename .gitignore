@@ -72,3 +72,8 @@ cosign.pub.password
 *kubeconfig*
 .terraform.tfstate
 .terraform.tfstate.backup
+
+# cargo-fuzz output
+fuzz/target/
+fuzz/artifacts/
+fuzz/coverage/

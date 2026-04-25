@@ -1,0 +1,105 @@
+name = "browser"
+description = "Chromium-family browsers (Brave, Chrome, Edge). Launch with --no-sandbox flag so the browser doesn't try to sandbox-in-sandbox. Add --password-store=basic to silence the Keychain warning — saved passwords then live plaintext in the profile dir, appropriate for a throwaway session."
+
+[filesystem]
+allow_metadata_read = true
+# Browsers touch a lot — read access to the whole FS is permitted so
+# extensions, downloads, dev tools, printing etc. all work. Writes are
+# narrowed and secrets are explicitly denied below.
+read = ["/"]
+read_write = [
+    "/dev",
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+    # macOS Chromium-family profile dirs.
+    "~/Library/Caches",
+    "~/Library/Application Support/BraveSoftware",
+    "~/Library/Application Support/Google",
+    "~/Library/Application Support/Chromium",
+    "~/Library/Application Support/Microsoft Edge",
+    "~/Library/Preferences",
+    "~/Library/Logs",
+    "~/Library/Saved Application State",
+    "~/Library/WebKit",
+    "~/Downloads",
+    "~/Desktop",
+    "~/Documents",
+    # Linux Chromium-family profile dirs + runtime sockets. Paths that
+    # don't exist on the current platform are silently skipped by both
+    # backends (Landlock `skipping read path …`; SBPL literal rules
+    # just never match).
+    "~/.config/google-chrome",
+    "~/.config/chromium",
+    "~/.config/BraveSoftware",
+    "~/.config/microsoft-edge",
+    "~/.cache/google-chrome",
+    "~/.cache/chromium",
+    "~/.cache/BraveSoftware",
+    "~/.cache/microsoft-edge",
+    "~/.pki",        # NSS cert DB (CA pinning, client certs)
+    "/dev/shm",      # Chromium IPC relies heavily on POSIX shared memory
+    "/dev/dri",      # GPU / DRM for hardware acceleration
+    # XDG runtime dir: Wayland / Pipewire / PulseAudio / DBus session
+    # bus sockets live here. ${XDG_RUNTIME_DIR} is not exported to the
+    # config layer yet — in practice it's always /run/user/$UID, but
+    # we grant the parent /run/user so whichever UID the process maps
+    # to works.
+    "/run/user",
+]
+deny = [
+    # Never readable by the browser — session credentials & secrets.
+    # Most of these are cross-platform; the macOS-specific Library
+    # entries don't exist on Linux and vice-versa, so both lists
+    # cohabit harmlessly.
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/.docker",
+    "~/.gnupg",
+    "~/.kube",
+    "~/.netrc",
+    "~/.password-store",
+    "~/.bash_history",
+    "~/.zsh_history",
+    # macOS-specific.
+    "~/Library/Keychains",
+    "~/Library/Application Support/com.apple.TCC",
+    "~/Library/Cookies",
+    "~/Library/Mail",
+    "~/Library/Messages",
+    "~/Library/Application Support/Firefox",
+    "~/Library/Safari",
+    # Linux-specific: don't let one Chromium peek at another browser's
+    # profile, and keep pass-manager + crypto stores off-limits.
+    "~/.mozilla",
+    "~/snap/firefox",
+    "~/.config/KeePass",
+    "~/.config/keepassxc",
+    "~/.config/syncthing",
+    "~/.local/share/keyrings",
+]
+
+[network]
+allow_localhost = true
+allow_dns = true
+allow_inbound = true
+allow_unix_sockets = true
+outbound_tcp = ["*:443", "*:80"]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[system]
+allow_sysctl_read = true
+allow_iokit = true
+allow_ipc = true
+# Browsers use a huge surface of Mach services (WindowServer, fonts, font
+# server, print, accessibility, spellcheck, pasteboard, speech, IOKit,
+# audio, color, metal, power, etc.). Enumerating them all is brittle across
+# macOS versions — allow_mach_all is the pragmatic choice.
+allow_mach_all = true
+
+[env]
+pass_all = true

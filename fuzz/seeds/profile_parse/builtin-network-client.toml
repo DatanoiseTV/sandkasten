@@ -1,0 +1,56 @@
+name = "network-client"
+description = "Outbound HTTPS + DNS only. Read-only FS. Good for curl/wget-style tools."
+extends = "minimal-cli"
+
+[filesystem]
+# TLS clients read their system-wide config and trust store.
+# On macOS, Apple's own CA roots live in /System/Library/OpenSSL but
+# third-party tools (curl/libressl/openssl) also consult /etc/ssl.
+read = [
+    "/etc/ssl",
+    "/usr/lib/ssl",
+]
+# macOS's /etc/resolv.conf is a symlink to /var/run/resolv.conf, and
+# getaddrinfo() also checks /var/run/mDNSResponder for the Unix-domain
+# socket to the resolver. Without these the sandboxed process can't
+# resolve DNS even though we allowed UDP:53.
+read_files = [
+    "/var/run/resolv.conf",
+]
+# Writable tempdir. `/usr/bin/{git,python3,curl,...}` on macOS are
+# xcrun stubs that write a cache file to $TMPDIR (xcrun_db-*) before
+# they'll exec the real tool — without this, every Apple-shimmed
+# binary fails with "couldn't create cache file". On Linux most DNS
+# resolvers and TLS caches also want a tempdir. /private/var/folders
+# is macOS's per-user $TMPDIR root; /tmp is the Linux (and BSD)
+# fallback. Keeping this inside network-client — not strict — so
+# minimal-cli users retain their full read-only guarantee.
+read_write = [
+    "/private/var/folders",
+    "/tmp",
+]
+
+[network]
+allow_dns = true
+allow_unix_sockets = true   # many HTTP clients use local sockets for IPC/agent forwarding
+outbound_tcp = [
+    "*:443",
+    "*:80",
+]
+
+[system]
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.nsurlsessiond",
+    "com.apple.SystemConfiguration.configd",
+    # DNS resolution — both the public service and the legacy lookup port.
+    "com.apple.dnssd.service",
+    "com.apple.mDNSResponder",
+    "com.apple.mDNSResponder.dnsproxy",
+    # Some TLS libraries consult the OCSP/CRL cache here.
+    "com.apple.ocspd",
+    "com.apple.cfnetwork.cfnetworkagent",
+    "com.apple.networkd",
+    "com.apple.symptomsd",
+]

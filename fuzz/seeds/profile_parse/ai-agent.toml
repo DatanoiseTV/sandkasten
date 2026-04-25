@@ -1,0 +1,254 @@
+# Sandbox profile for agentic CLI tools (Claude Code, opencode, aider,
+# Continue, Cursor Agent, …) that execute shell commands on your behalf.
+#
+# These tools have to read your code, edit files, run tests, and call
+# their model API. They do NOT need ~/.ssh, ~/.aws, your password
+# store, your shell history, or sudo. This profile gives them the
+# first set and hard-denies the second.
+#
+# Use:
+#     sandkasten run ai-agent -- claude
+#     sandkasten run ai-agent -- opencode
+#     sandkasten run ai-agent -- aider
+#
+# Or as a shell alias:
+#     alias claude='sandkasten run ai-agent -- claude'
+#
+# Anything the agent fork+exec's (npm, cargo, pytest, gh, …) inherits
+# the same sandbox — verified inheritance: PR_SET_NO_NEW_PRIVS keeps
+# seccomp + Landlock + capability drops sticky across exec; user/PID/
+# mount/net namespaces inherit by definition; macOS Seatbelt MACF
+# policy propagates to children automatically.
+#
+# ─── AUTHENTICATION ─────────────────────────────────────────────────
+#
+# This profile DENIES `~/Library/Keychains` so a compromised agent
+# can't walk away with your other apps' creds. That means agents that
+# default to storing their auth token in macOS Keychain (Claude Code,
+# Cursor Agent) need an alternative.
+#
+# Two paths that work, pick one:
+#
+#  (1) Environment variable — the cleanest. Set the model API key in
+#      your shell (or 1Password/pass shell-out) so it's already in the
+#      env when sandkasten forks. The profile's `env.pass` list
+#      whitelists ANTHROPIC_API_KEY, OPENAI_API_KEY, etc. through.
+#          export ANTHROPIC_API_KEY="sk-ant-..."
+#          sandkasten run ai-agent -- claude
+#
+#  (2) Pre-authenticate UNSANDBOXED, then loosen the deny — first run
+#      `claude` (or `opencode`, etc.) directly, complete the OAuth
+#      flow which writes the token to Keychain, then narrow this
+#      profile's `deny` list to just the OTHER apps' Keychain entries
+#      rather than the whole `~/Library/Keychains` directory. This
+#      requires per-app Keychain partitioning that's beyond what
+#      Seatbelt's path-based rules can express cleanly — usually (1)
+#      is the right choice.
+#
+# If `claude` appears to hang at startup with no TUI, it's almost
+# always the auth gate; check that ANTHROPIC_API_KEY is exported in
+# the parent shell. Run `sandkasten -vvv run ai-agent -- claude`
+# to see the kernel denial trace.
+
+name = "ai-agent"
+description = "Hardened sandbox for AI coding agents (Claude Code, opencode, aider, …). Read /, write project + agent state, outbound to model APIs + package registries, hard-deny secrets and sudo."
+
+extends = "minimal-cli"
+
+[filesystem]
+# Wide read so the agent can grep through dependencies, system headers,
+# its own runtime, etc. Writes are narrowed to project + agent state.
+read = ["/"]
+
+read_write = [
+    # The project the agent is working on.
+    "${CWD}",
+
+    # Agent state directories — XDG_CONFIG / XDG_DATA / dotfile / macOS
+    # Application Support shapes for each tool. Paths that don't exist
+    # on the current platform are silently skipped by both backends.
+    # Several agents also write SQLite WAL/log files under XDG_DATA
+    # (`~/.local/share/<agent>/`) on macOS, not just on Linux — opencode
+    # in particular fails with `Failed to run the query 'PRAGMA
+    # wal_checkpoint(PASSIVE)'` if its data dir isn't writable.
+    "~/.config/claude",
+    "~/.local/share/claude",
+    "~/.claude",
+    "~/Library/Application Support/Claude",
+    "~/.config/opencode",
+    "~/.local/share/opencode",
+    "~/.opencode",
+    "~/Library/Application Support/opencode",
+    "~/.config/aider",
+    "~/.local/share/aider",
+    "~/.aider",
+    "~/Library/Application Support/aider",
+    "~/.config/continue",
+    "~/.local/share/continue",
+    "~/Library/Application Support/Continue",
+    "~/.config/cursor-agent",
+    "~/.local/share/cursor-agent",
+
+    # Generic per-user caches the agent's tooling reaches into.
+    "~/.cache",
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+]
+
+# Defense-in-depth — even though the agent is a "trusted" tool, a
+# compromised dep or prompt injection should not be able to read
+# these. Cross-platform: macOS-specific entries don't exist on
+# Linux and vice versa, so both lists cohabit harmlessly.
+deny = [
+    # Cross-platform secrets.
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.docker",
+    "~/.kube",
+    "~/.netrc",
+    "~/.password-store",
+    "~/.config/gcloud",
+    "~/.bash_history",
+    "~/.zsh_history",
+
+    # macOS.
+    "~/Library/Keychains",
+    "~/Library/Application Support/com.apple.TCC",
+    "~/Library/Cookies",
+    "~/Library/Mail",
+    "~/Library/Messages",
+
+    # Linux.
+    "~/.local/share/keyrings",
+    "~/.config/keepassxc",
+    "~/.config/KeePass",
+]
+
+[network]
+allow_dns = true
+allow_localhost = true       # local dev servers, language-server IPC
+allow_unix_sockets = true    # mDNSResponder, dbus session bus, etc.
+
+# Strict per-host outbound. Linux enforces these as nftables rules
+# inside the pasta/slirp4netns netns. macOS Seatbelt's grammar widens
+# specific hostnames to `*:443` (kernel limitation, documented) — the
+# same effect can be tightened with `[network.proxy]` + an L7-filtering
+# mitmproxy / Squid if you need real semantic filtering on macOS too.
+outbound_tcp = [
+    # Model APIs.
+    "api.anthropic.com:443",
+    "api.openai.com:443",
+    "generativelanguage.googleapis.com:443",
+    "openrouter.ai:443",
+    "api.mistral.ai:443",
+    "api.groq.com:443",
+    "api.together.xyz:443",
+    "api.deepseek.com:443",
+    "api.cohere.com:443",
+    "api.fireworks.ai:443",
+
+    # GitHub (issues, PRs, code search, raw blob fetches).
+    "github.com:443",
+    "api.github.com:443",
+    "objects.githubusercontent.com:443",
+    "raw.githubusercontent.com:443",
+    "codeload.github.com:443",
+    "github.io:443",
+
+    # Package registries — for the `npm install` / `pip install` /
+    # `cargo fetch` calls the agent will inevitably make.
+    "registry.npmjs.org:443",
+    "pypi.org:443",
+    "files.pythonhosted.org:443",
+    "crates.io:443",
+    "static.crates.io:443",
+    "index.crates.io:443",
+    "rubygems.org:443",
+    "proxy.golang.org:443",
+    "sum.golang.org:443",
+]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+# Defense against the agent (or, more realistically, a prompt-injected
+# tool call) trying to escalate. CLOSEST equivalent of "running this
+# tool can't get root even if it tries":
+#   - block_privilege_elevation: deny exec of sudo / su / doas /
+#     pkexec / runuser / visudo + their Homebrew / Linuxbrew / Snap /
+#     /usr/local/bin variants.
+#   - block_setid_syscalls: also seccomp-deny setuid/setgid/setreuid/
+#     setregid/setresuid/setresgid/setfsuid/setfsgid/setgroups so
+#     shellcode that skips the named binary still can't change creds.
+block_privilege_elevation = true
+block_setid_syscalls      = true
+
+# Memory W^X — disabled by default because most agent CLIs are Node
+# (V8) or Bun (JIT) based and would crash. Turn on if your agent
+# runs only AOT-compiled binaries.
+no_w_x = false
+
+# Spectre / SSBD — opt-in if you handle untrusted input that could
+# train branch predictors. ~2–5% CPU cost.
+mitigate_spectre = false
+
+[env]
+# Pass *only* the env vars the agent legitimately needs. Notice what's
+# NOT in this list: GITHUB_TOKEN (use the agent's own auth flow if it
+# needs GH), AWS_*, CLOUDSDK_*, KUBECONFIG, NPM_TOKEN, PYPI_TOKEN.
+# Compromise the agent → still can't exfiltrate cached creds from the
+# parent shell.
+pass = [
+    # Process basics.
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+    "EDITOR", "VISUAL", "PAGER", "COLORTERM",
+
+    # Model API keys (only those — not GH/AWS/etc.).
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+    "OPENAI_API_KEY",    "OPENAI_BASE_URL",
+    "GEMINI_API_KEY",    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "COHERE_API_KEY",
+    "FIREWORKS_API_KEY",
+    "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT",
+
+    # Project locale.
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    "GIT_AUTHOR_NAME",    "GIT_AUTHOR_EMAIL",
+]
+
+# No `[limits]` block on purpose.
+#
+# An interactive agent session can run for hours, allocate gigabytes of
+# embeddings cache, and fork-spawn many compiler/test/LSP workers. The
+# usual rlimit knobs that make sense for a CI step are wrong here:
+#
+#   • `cpu_seconds` / `wall_timeout_seconds`   — kill long sessions.
+#   • `memory_mb`                              — surfaces as obscure
+#                                                 OOMs deep inside the
+#                                                 agent's runtime.
+#   • `processes` (RLIMIT_NPROC, macOS)        — per-real-user, not
+#                                                 per-process. The cap
+#                                                 covers your ENTIRE
+#                                                 logged-in session
+#                                                 (browser, editors,
+#                                                 daemons), so any
+#                                                 finite value can
+#                                                 EAGAIN when Bun-based
+#                                                 agents (Claude Code,
+#                                                 opencode) fork
+#                                                 internal workers.
+#   • `file_size_mb`                           — bites large model
+#                                                 caches and gzipped
+#                                                 build outputs.
+#
+# If you have a non-interactive use case (CI, batch run, scheduled
+# task), copy this profile and add a `[limits]` block tuned to that
+# workload — see `examples/ci-step.toml` and the QUICKSTART for shape.

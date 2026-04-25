@@ -1,0 +1,30 @@
+[package]
+name = "sandkasten-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.sandkasten]
+path = ".."
+
+# Fuzz targets. Each one is a separate `cargo fuzz run <name>`.
+
+[[bin]]
+name = "profile_parse"
+path = "fuzz_targets/profile_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_endpoint"
+path = "fuzz_targets/parse_endpoint.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,58 @@
+name = "self"
+description = "Default. Sandboxed app sees only its own working directory (${CWD}) and the minimal system paths needed to run a binary. No rest of filesystem, no home, no network."
+extends = "minimal-cli"
+
+[filesystem]
+# Broad read so dyld / dlopen / firmlinked system bundles always load.
+# macOS 11+ moved many system files under /System/Volumes/Preboot/
+# and /System/Cryptexes/ via firmlinks that are hard to enumerate up front.
+# On Linux the usual /usr /etc /lib /lib64 are all covered by this.
+read = ["/"]
+
+# The sandbox's "own folder" — read+write access to the working directory
+# sandkasten was invoked from. ${CWD} is expanded at runtime.
+read_write = [
+    "${CWD}",
+]
+
+# Defensive deny for user secrets. Evaluated after allow, so these win
+# against `read = ["/"]` above on macOS (Seatbelt last-match-wins). On
+# Linux Landlock is allow-list only — to enforce these deny paths there,
+# narrow `read` further or keep the allow-list specific.
+deny = [
+    "${HOME}/.ssh",
+    "${HOME}/.aws",
+    "${HOME}/.gnupg",
+    "${HOME}/.config/gcloud",
+    "${HOME}/.docker",
+    "${HOME}/.kube",
+    "${HOME}/.netrc",
+    "${HOME}/.password-store",
+    "${HOME}/Library/Keychains",
+    "${HOME}/Library/Application Support/com.apple.TCC",
+    "${HOME}/Library/Cookies",
+    "${HOME}/Library/Mail",
+    "${HOME}/Library/Messages",
+    "${HOME}/.bash_history",
+    "${HOME}/.zsh_history",
+]
+
+[network]
+# UNIX-domain sockets are needed by most modern apps (VS Code, GPG agent,
+# Docker, Electron, browsers). Permitting the bind/connect ops is gated
+# further by the filesystem rules — the socket file itself still has to
+# land in a writable path.
+allow_unix_sockets = true
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[system]
+allow_ipc = true
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.CoreServices.coreservicesd",
+    "com.apple.lsd.mapdb",
+]

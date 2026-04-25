@@ -1,0 +1,61 @@
+name = "electron"
+description = "Electron apps (VS Code, Slack, Discord, Obsidian, etc.). Similar needs to the browser template but read-only outside the app's own data dir."
+
+[filesystem]
+allow_metadata_read = true
+read = ["/"]
+read_write = [
+    "/dev",
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+    "~/Library/Caches",
+    "~/Library/Preferences",
+    "~/Library/Saved Application State",
+    "~/Library/Logs",
+    # Electron apps (VS Code, Slack, Discord, Obsidian, Signal, Spotify,
+    # …) store ALL their runtime state under ~/Library/Application Support/
+    # <AppName>/ — preferences JSON, extensions, IndexedDB/SQLite, log
+    # subdirs, Crashpad reports, SingletonLock files. Without this the
+    # very first boot fails with "mkdir .../Application Support/<App>/
+    # logs/…: Operation not permitted". The deny list below still
+    # excludes com.apple.TCC and similar sensitive subtrees.
+    "~/Library/Application Support",
+]
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/.docker",
+    "~/.gnupg",
+    "~/.kube",
+    "~/.netrc",
+    "~/.password-store",
+    "~/Library/Keychains",
+    "~/Library/Application Support/com.apple.TCC",
+    "~/Library/Cookies",
+    "~/Library/Mail",
+    "~/Library/Messages",
+    "~/.bash_history",
+    "~/.zsh_history",
+]
+
+[network]
+allow_localhost = true
+allow_dns = true
+allow_inbound = true
+allow_unix_sockets = true
+outbound_tcp = ["*:443", "*:80"]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[system]
+allow_sysctl_read = true
+allow_iokit = true
+allow_ipc = true
+allow_mach_all = true
+
+[env]
+pass_all = true
