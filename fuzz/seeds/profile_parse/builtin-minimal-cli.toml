@@ -1,0 +1,29 @@
+name = "minimal-cli"
+description = "Read-only filesystem for common CLI tools. No network, no writes."
+extends = "strict"
+
+[filesystem]
+read = [
+    "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/local",
+    "/opt",
+    # CWD read-only — the common reason to reach for minimal-cli is
+    # `awk / sed / sort / wc / grep <file-in-cwd>`. Without this,
+    # every invocation needs extra `--read` flags. Writes are still
+    # denied; use `self` or `dev` if you need to write the result back.
+    "${CWD}",
+]
+read_files = [
+    "/etc/passwd",
+    "/etc/group",
+]
+
+[process]
+allow_fork = true
+allow_exec = true
+
+[env]
+pass = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL"]

@@ -1,0 +1,112 @@
+# Sandbox profile for a database daemon (Postgres, MySQL/MariaDB,
+# Redis, MongoDB, …) running as its dedicated service user.
+#
+# Posture:
+#   • read its config + system libs, nothing else
+#   • write ONLY the data dir + WAL + log dir + sock dir
+#   • bind one port, NO outbound — a database is a passive listener
+#   • W^X enforced for AOT engines (Postgres, Redis, MariaDB native)
+#     — keep off for JIT engines (MongoDB embeds V8/Spider, MySQL
+#     8.x's JIT, ClickHouse JIT)
+#   • setid syscalls + privilege elevation blocked
+#
+# Run as the database's service user (postgres, mysql, redis), not
+# root. Do NOT add a user-init password to env.pass — pass it via
+# secrets file instead so it doesn't leak via /proc/<pid>/environ.
+#
+# Usage:
+#     sandkasten run database -- /usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main
+#     sandkasten run database -- /usr/sbin/mariadbd --datadir=/var/lib/mysql
+#     sandkasten run database -- /usr/bin/redis-server /etc/redis/redis.conf
+
+name = "database"
+description = "Database daemon (Postgres / MySQL / Redis / Mongo). Read config, write data dir + WAL + logs, bind one port, NO outbound."
+
+extends = "minimal-cli"
+
+[filesystem]
+read = [
+    "/etc/postgresql",
+    "/etc/mysql",
+    "/etc/redis",
+    "/etc/mongodb",
+    "/etc/ssl",        # for TLS-enabled connections
+]
+
+read_write = [
+    # Postgres data + WAL — note WAL can be on a separate volume.
+    "/var/lib/postgresql",
+    "/var/log/postgresql",
+    "/run/postgresql",     # UDS + pid file
+
+    # MySQL / MariaDB.
+    "/var/lib/mysql",
+    "/var/log/mysql",
+    "/run/mysqld",
+
+    # Redis (typically AOF + RDB snapshots).
+    "/var/lib/redis",
+    "/var/log/redis",
+    "/run/redis",
+
+    # MongoDB.
+    "/var/lib/mongodb",
+    "/var/log/mongodb",
+    "/run/mongodb",
+
+    # Generic.
+    "/tmp",
+    "/private/tmp",
+]
+
+[network]
+allow_dns          = false   # a database has no business resolving names
+allow_localhost    = true    # replication peer or sidecar metrics, often local
+allow_unix_sockets = true    # standard psql / mysql client connections
+
+# Inbound — bind one port, restrict to private interface in production.
+# Replace 0.0.0.0 with your private IP or 127.0.0.1.
+allow_inbound = true
+inbound_tcp = [
+    # Postgres.
+    "0.0.0.0:5432", "[::]:5432",
+    # MySQL / MariaDB.
+    # "0.0.0.0:3306", "[::]:3306",
+    # Redis.
+    # "0.0.0.0:6379", "[::]:6379",
+    # MongoDB.
+    # "0.0.0.0:27017", "[::]:27017",
+]
+
+# A vanilla DB does NOT dial out. If you replicate to another node
+# in the cluster, list the peers explicitly here.
+outbound_tcp = [
+    # "db-replica-1.internal:5432",
+    # "db-replica-2.internal:5432",
+]
+
+[process]
+allow_fork = true     # Postgres uses one process per connection; MySQL uses threads
+allow_exec = false    # databases never legitimately shell out at runtime
+block_privilege_elevation = true
+block_setid_syscalls      = true
+no_w_x                    = true   # AOT for the listed engines; flip if your DB JITs
+
+[env]
+# Minimal whitelist. PG/MySQL/Redis-specific envs only.
+# Don't pass DB_PASSWORD via env in production — use a secrets file
+# read from the data dir, or a unix socket from a credential daemon.
+pass = [
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+    "PGDATA", "PGUSER", "PGPORT", "PGHOST",
+    "MYSQL_HOME",
+    "REDIS_PORT",
+]
+
+[limits]
+# Databases want as much memory as you give them — set to your buffer
+# pool / shared_buffers + headroom, NOT to a generic small number, or
+# performance tanks.
+memory_mb    = 8192
+file_size_mb = 65536  # WAL segments and large dumps need this loose
+# No cpu_seconds, no wall_timeout_seconds.

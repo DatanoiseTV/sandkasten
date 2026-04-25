@@ -1,0 +1,107 @@
+# Sandbox profile for a background worker / queue consumer that:
+#
+#   • PULLS jobs from a broker (Redis/Sidekiq, RabbitMQ/Celery, SQS,
+#     NATS, Kafka consumer)
+#   • does work — image processing, sending mail, calling third-
+#     party APIs, hitting your own DB
+#   • does NOT accept inbound connections itself
+#
+# Differs from `api-server.toml` on exactly one axis: no
+# `inbound_tcp`. Outbound is identically locked down.
+#
+# Common shapes this fits:
+#   • Sidekiq / Resque worker (Ruby)
+#   • Celery worker (Python)
+#   • Bull / BullMQ worker (Node)
+#   • RQ worker (Python)
+#   • A Go binary in `for { msg := <-queue.Messages(); … }` shape
+#
+# Usage:
+#     sandkasten run worker -- bundle exec sidekiq -q default
+#     sandkasten run worker -- celery -A myapp worker -l info
+#     sandkasten run worker -- node /srv/worker/dist/worker.js
+#     sandkasten run worker -- /opt/myworker/bin/myworker
+
+name = "worker"
+description = "Background queue worker. No inbound, strict outbound to broker + DB + upstream APIs, write only to state/log dir."
+
+extends = "minimal-cli"
+
+[filesystem]
+read = [
+    "/etc/ssl",
+    "/etc/resolv.conf",
+    "/usr/lib",
+    "/usr/share",
+    "/opt/myworker",         # change to your install path
+]
+
+read_write = [
+    "/var/log/myworker",
+    "/var/lib/myworker",     # state, partial uploads, temp images
+    "/run/myworker",
+    "/tmp",
+    "/private/tmp",
+]
+
+[network]
+allow_dns          = true
+allow_localhost    = true   # broker/DB sidecar on localhost is common in dev/staging
+allow_unix_sockets = true
+
+# NO inbound. A worker doesn't listen.
+allow_inbound = false
+
+# Outbound — broker + DB + whatever the worker calls into.
+outbound_tcp = [
+    # Job broker.
+    "redis.internal:6379",
+    # "rabbitmq.internal:5672",
+    # "kafka-1.internal:9092",
+    # "sqs.us-east-1.amazonaws.com:443",
+    # "nats.internal:4222",
+
+    # Database (often the worker writes back results).
+    "db.internal:5432",
+
+    # Object storage.
+    # "s3.amazonaws.com:443",
+    # "<bucket>.s3.<region>.amazonaws.com:443",
+
+    # Outbound APIs the worker calls.
+    # "api.stripe.com:443",
+    # "api.sendgrid.com:443",
+    # "api.twilio.com:443",
+    # "hooks.slack.com:443",
+    # "api.github.com:443",
+
+    # Observability.
+    # "ingest.sentry.io:443",
+    # "api.datadoghq.com:443",
+]
+
+[process]
+allow_fork = true
+allow_exec = false   # flip to true if jobs shell out (ffmpeg, imagemagick, git, …)
+block_privilege_elevation = true
+block_setid_syscalls      = true
+no_w_x                    = false  # most worker runtimes JIT (Node, Ruby YJIT, Python with JIT)
+
+[env]
+pass = [
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+    "RAILS_ENV", "DJANGO_SETTINGS_MODULE", "NODE_ENV",
+
+    "DATABASE_URL", "REDIS_URL",
+    "AMQP_URL", "RABBITMQ_URL", "KAFKA_BROKERS",
+
+    # Narrow this to what the worker actually calls.
+    "STRIPE_API_KEY", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY",
+
+    "SENTRY_DSN", "DATADOG_API_KEY",
+]
+
+[limits]
+memory_mb    = 2048
+file_size_mb = 4096   # workers handling user uploads / image processing want headroom
+# No cpu_seconds, no wall_timeout_seconds — workers run forever.

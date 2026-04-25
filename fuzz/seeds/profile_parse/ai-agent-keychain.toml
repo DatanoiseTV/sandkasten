@@ -1,0 +1,175 @@
+# Sandbox profile for AI coding agents — KEYCHAIN-ALLOWED VARIANT.
+#
+# Same posture as `ai-agent.toml` (read-anywhere, write-only-project +
+# agent-state, narrow outbound, hard-deny ~/.ssh / ~/.aws / shell
+# history / mail / cookies / TCC, no sudo, no setid syscalls), with
+# ONE deliberate relaxation:
+#
+#     ~/Library/Keychains is read-write.
+#
+# That allows agents which store their OAuth token in macOS Keychain
+# (Claude Code, Cursor Agent) to complete `/login` and persist the
+# token across restarts. The trade-off is real: a compromised agent
+# (or a prompt-injected tool call) can now read every Keychain entry
+# the current user owns — Safari saved passwords, Mail account
+# passwords, app-specific secrets, the lot. Seatbelt's grammar is
+# path-based and the Keychain is one shared file
+# (`login.keychain-db`), so there is no clean way to scope this to
+# "just this agent's entries". If you can use ANTHROPIC_API_KEY in
+# env instead, prefer `ai-agent.toml`.
+#
+# Use:
+#     sandkasten run ai-agent-keychain -- claude
+#
+# When to pick this profile:
+#   • You don't have a model API key handy and want OAuth login.
+#   • Your provider only supports interactive auth.
+#   • You've accepted that the agent runtime sees the user keychain
+#     and you trust the agent's binary + every package it might
+#     fetch (npm/pip/cargo) — defense-in-depth is reduced here.
+#
+# Linux note: this profile makes no difference on Linux — the
+# Keychains path doesn't exist there. If you want to allow Linux
+# Secret Service / GNOME keyring / KWallet, add their dirs to
+# `read_write` and remove the matching `deny` entries.
+
+name = "ai-agent-keychain"
+description = "AI coding agent sandbox with macOS Keychain access enabled (lets Claude Code / Cursor Agent OAuth-login). Less defense-in-depth than ai-agent — see file header."
+
+extends = "minimal-cli"
+
+[filesystem]
+read = ["/"]
+
+read_write = [
+    "${CWD}",
+
+    # Agent state.
+    "~/.config/claude",
+    "~/.local/share/claude",
+    "~/.claude",
+    "~/Library/Application Support/Claude",
+    "~/.config/opencode",
+    "~/.local/share/opencode",
+    "~/.opencode",
+    "~/Library/Application Support/opencode",
+    "~/.config/aider",
+    "~/.local/share/aider",
+    "~/.aider",
+    "~/Library/Application Support/aider",
+    "~/.config/continue",
+    "~/.local/share/continue",
+    "~/Library/Application Support/Continue",
+    "~/.config/cursor-agent",
+    "~/.local/share/cursor-agent",
+
+    # Caches.
+    "~/.cache",
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+
+    # ─── THE OPT-IN RELAXATION ─────────────────────────────────────
+    # macOS Keychain. Read-write because Claude/Cursor write the new
+    # OAuth token here after the login flow completes.
+    "~/Library/Keychains",
+]
+
+# Same deny list as `ai-agent.toml`, MINUS the keychain / keyring
+# entries. Everything else stays default-deny.
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.docker",
+    "~/.kube",
+    "~/.netrc",
+    "~/.password-store",
+    "~/.config/gcloud",
+    "~/.bash_history",
+    "~/.zsh_history",
+
+    "~/Library/Application Support/com.apple.TCC",
+    "~/Library/Cookies",
+    "~/Library/Mail",
+    "~/Library/Messages",
+]
+
+[network]
+allow_dns = true
+allow_localhost = true
+allow_unix_sockets = true
+outbound_tcp = [
+    "api.anthropic.com:443",
+    "api.openai.com:443",
+    "generativelanguage.googleapis.com:443",
+    "openrouter.ai:443",
+    "api.mistral.ai:443",
+    "api.groq.com:443",
+    "api.together.xyz:443",
+    "api.deepseek.com:443",
+    "api.cohere.com:443",
+    "api.fireworks.ai:443",
+
+    "github.com:443",
+    "api.github.com:443",
+    "objects.githubusercontent.com:443",
+    "raw.githubusercontent.com:443",
+    "codeload.github.com:443",
+    "github.io:443",
+
+    "registry.npmjs.org:443",
+    "pypi.org:443",
+    "files.pythonhosted.org:443",
+    "crates.io:443",
+    "static.crates.io:443",
+    "index.crates.io:443",
+    "rubygems.org:443",
+    "proxy.golang.org:443",
+    "sum.golang.org:443",
+]
+
+# Mach services for Keychain unlock IPC on macOS — without these the
+# SecKeychain framework's calls to securityd fail silently and the
+# OAuth flow can't store the new token. macOS-only; harmless on Linux.
+[system]
+mach_services = [
+    "com.apple.SecurityServer",
+    "com.apple.securityd",
+    "com.apple.cfprefsd.daemon",
+    "com.apple.cfprefsd.agent",
+]
+
+[process]
+allow_fork = true
+allow_exec = true
+block_privilege_elevation = true
+block_setid_syscalls      = true
+no_w_x = false
+mitigate_spectre = false
+
+[env]
+pass = [
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+    "EDITOR", "VISUAL", "PAGER", "COLORTERM",
+
+    # Model API keys — still pass these through if set; they're
+    # higher-priority than Keychain login on most agents.
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+    "OPENAI_API_KEY",    "OPENAI_BASE_URL",
+    "GEMINI_API_KEY",    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "COHERE_API_KEY",
+    "FIREWORKS_API_KEY",
+    "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT",
+
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    "GIT_AUTHOR_NAME",    "GIT_AUTHOR_EMAIL",
+]
+
+# No `[limits]` block on purpose — see ai-agent.toml header for why
+# (RLIMIT_NPROC on macOS is per-real-user, kills Bun-based agents).

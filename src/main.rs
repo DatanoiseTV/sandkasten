@@ -41,7 +41,46 @@ mod linux;
 fn main() -> ExitCode {
     let args = cli::Cli::parse();
     log::set(log::from_flags(args.verbose, args.quiet));
-    if let Err(e) = events::init(&args.events, args.events_file.as_deref()) {
+
+    // Auto-route events into a per-run NDJSON file under
+    // $SANDKASTEN_EVENTS_DIR if the env var is set and the user hasn't
+    // already asked for an explicit --events / --events-file. This is
+    // how the optional macOS menu-bar UI subscribes to denial events:
+    // it sets the env var in its launch environment, and every
+    // sandkasten run from that shell drops events into the directory
+    // it's watching. Server / headless users never set the var and see
+    // exactly the v0.4.2 behaviour.
+    let resolved_events_file: Option<std::path::PathBuf> = args.events_file.clone().or_else(|| {
+        if args.events != "none" {
+            return None; // user already asked for stderr/stdout — respect it
+        }
+        let dir = std::env::var_os("SANDKASTEN_EVENTS_DIR")?;
+        let dir = std::path::PathBuf::from(dir);
+        if dir.as_os_str().is_empty() {
+            return None;
+        }
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!(
+                "sandkasten: SANDKASTEN_EVENTS_DIR={} unusable: {e}",
+                dir.display()
+            );
+            return None; // soft-fail — never break the run for events
+        }
+        let pid = std::process::id();
+        let ts_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        Some(dir.join(format!("run-{ts_ms}-{pid}.ndjson")))
+    });
+    // If we synthesised a file from the env var, also flip the format
+    // from `none` to `json` so events actually get written.
+    let events_format = if resolved_events_file.is_some() && args.events == "none" {
+        "json"
+    } else {
+        args.events.as_str()
+    };
+    if let Err(e) = events::init(events_format, resolved_events_file.as_deref()) {
         eprintln!("sandkasten: {e:#}");
         return ExitCode::from(2);
     }
@@ -517,13 +556,19 @@ fn run_sandboxed(
     let start = std::time::Instant::now();
     let rc = macos::run(profile, cwd, argv)?;
     log::info(format_args!("child exited with code {rc}"));
-    if log::at!(log::Level::Trace) {
+    // Capture denials when the user asked (-vvv) OR when structured
+    // events are enabled — the optional menu-bar UI subscribes to them
+    // through the events sink and can't react to anything we don't
+    // emit. Always-on capture would be too chatty for plain runs.
+    if log::at!(log::Level::Trace) || events::enabled() {
         // Give the unified log a moment to flush; widen the query window
         // generously so short-lived children are covered.
         std::thread::sleep(std::time::Duration::from_millis(600));
         let window = start.elapsed() + std::time::Duration::from_secs(2);
         let child_pid = macos::last_child_pid();
-        macos::denials::show_since(window, child_pid);
+        let print_summary = log::at!(log::Level::Trace);
+        let profile_name = profile.name.as_deref().unwrap_or("<inline>");
+        macos::denials::show_since(window, child_pid, print_summary, profile_name);
     }
     Ok(rc)
 }

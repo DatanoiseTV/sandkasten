@@ -1,0 +1,54 @@
+name = "dev"
+description = "Permissive development sandbox. Read FS, write to CWD + tmp, HTTPS/SSH/DNS + localhost network."
+extends = "minimal-cli"
+
+[filesystem]
+# Wide read so toolchains can find libraries, frameworks, configs.
+read = [
+    "/",
+]
+read_write = [
+    # CWD — the most common dev use case is "clone/build/edit in this
+    # directory". Without CWD here, `git clone`, `npm install`,
+    # `cargo build`, etc. all fail at the first write.
+    "${CWD}",
+    "/tmp",
+    "/private/tmp",
+    "/private/var/folders",
+    "~/.cache",
+]
+# But hard-block secrets even though we allow read of "/".
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/gcloud",
+    "~/Library/Keychains",
+    "~/Library/Application Support/com.apple.TCC",
+]
+
+[network]
+allow_localhost = true
+allow_dns = true
+allow_inbound = true
+allow_unix_sockets = true
+# A "dev sandbox" with no outbound was only useful for fully offline
+# work. In practice every dev flow does at least one of: git clone over
+# HTTPS, npm/pip/cargo pulling packages, curl to an API. Include the
+# standard web + ssh presets so `sandkasten run dev -- ...` can do
+# ordinary dev work without the user having to hand-extend the profile.
+presets = ["web", "ssh"]
+
+[system]
+allow_iokit = true
+allow_ipc = true
+mach_services = [
+    "com.apple.system.logger",
+    "com.apple.system.notification_center",
+    "com.apple.CoreServices.coreservicesd",
+    "com.apple.lsd.mapdb",
+    "com.apple.SecurityServer",
+    "com.apple.coreservices.launchservicesd",
+]
+
+[env]
+pass_all = true
