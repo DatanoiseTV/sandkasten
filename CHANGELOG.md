@@ -1,5 +1,82 @@
 # Changelog
 
+## Unreleased
+
+Foundation work that doesn't change anything for existing users
+unless they opt in.
+
+### `clear = [...]` for narrowing inherited profiles
+
+Before this change, `extends` could only widen — list-valued fields
+unioned with the parent's, and bool allow-flags ORed. A child trying
+to take a permissive parent like `browser` and remove its outbound
+list would have its `outbound_tcp = []` silently merged into the
+parent's wide list and left wide. That's the wrong default for a
+security tool: extends should let you build BOTH "permissive base +
+extra capabilities" and "permissive base minus the bits I don't
+trust this run with".
+
+The new top-level `clear: Vec<String>` field lists dotted paths of
+parent fields to reset to default before merging:
+
+```toml
+extends = "browser"
+clear   = ["network.outbound_tcp", "network.allow_dns"]
+
+[network]
+allow_dns    = false
+outbound_tcp = []      # actually empty now, not unioned with parent
+```
+
+41 supported paths covering every field where narrowing is
+meaningful (outbound/inbound network, FS read/write/deny lists,
+mach_services, env.pass, hardware flags, fork/exec). Unknown paths
+in `clear` are a hard load-time error so typos can't silently no-op
+a security tightening.
+
+### `SANDKASTEN_EVENTS_DIR` env var
+
+When set and `--events-file` isn't, every run writes its NDJSON
+event stream to `${dir}/run-<ts>-<pid>.ndjson` and flips `--events`
+from the default `none` to `json`. Server / headless users who
+never set the var see exactly v0.4.2 behavior. Soft-fails if the
+dir is unwriteable — events are advisory and never break a run.
+
+### Structured denial events
+
+Captured kernel denials now emit one structured `denial` event per
+unique (op, target) pair into the same NDJSON stream, in addition
+to (or instead of) the existing `-vvv` human summary. Capture also
+runs when the events sink is enabled (not just `-vvv`). On modern
+macOS where the unified log no longer surfaces Sandbox events,
+capture degrades gracefully to "no rows".
+
+### Library facade
+
+New `src/lib.rs` re-exposes `config`, `events`, `presets`,
+`templates`, `log`, `hardware` so external consumers (and the new
+fuzz harness) can reach the parse-prone surfaces without going
+through the bin. Modules compile twice rather than restructuring
+the source tree; the bin is unchanged.
+
+### Cargo-fuzz harness
+
+Two `libfuzzer-sys` targets via `cargo-fuzz` (`fuzz/`):
+`profile_parse` (TOML loader: deserialise + finalise) and
+`parse_endpoint` (`host:port` parser used for outbound/inbound
+TCP/UDP). Brief sessions (2.2M + 19.6M iterations) found zero
+crashes against the current source. Setup documented in
+`fuzz/README.md`; running needs nightly.
+
+### Honesty pass on the macOS browser docs
+
+`--no-sandbox` is currently REQUIRED for Chromium to start under
+sandkasten on macOS — Chromium's inner sandbox can't initialise
+because our outer Seatbelt blocks the MAC-policy registration calls
+it makes. README + QUICKSTART now document this and the trade-off
+(losing per-renderer process isolation) honestly rather than
+implying our outer sandbox cleanly replaces Chromium's inner one.
+
 ## v0.4.2 — 2026-04-25
 
 Bug fixes, two new opt-in agent profiles, and a new family of
