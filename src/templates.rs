@@ -14,8 +14,17 @@ pub const ELECTRON: &str = include_str!("../templates/electron.toml");
 /// needing the source tree. Distinct from `builtin()` above: those
 /// are *templates* you can `extends = "..."`; these are
 /// *example profiles* you can run as-is or copy and edit.
-pub const BUNDLED_EXAMPLES: &[(&str, &str)] =
-    &[("ai-agent", include_str!("../examples/ai-agent.toml"))];
+pub const BUNDLED_EXAMPLES: &[(&str, &str)] = &[
+    ("ai-agent", include_str!("../examples/ai-agent.toml")),
+    (
+        "ai-agent-keychain",
+        include_str!("../examples/ai-agent-keychain.toml"),
+    ),
+    ("web-server", include_str!("../examples/web-server.toml")),
+    ("api-server", include_str!("../examples/api-server.toml")),
+    ("database", include_str!("../examples/database.toml")),
+    ("worker", include_str!("../examples/worker.toml")),
+];
 
 /// Names of the built-in templates, in the order they appear in the
 /// CLI / web-UI listings.

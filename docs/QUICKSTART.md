@@ -220,7 +220,11 @@ alias claude='sandkasten run ai-agent -- claude'
 ```
 
 > If `claude` hangs at startup with no TUI, it's the Keychain gate —
-> set `ANTHROPIC_API_KEY` in the parent shell.
+> set `ANTHROPIC_API_KEY` in the parent shell. If you can't, use the
+> opt-in variant `sandkasten run ai-agent-keychain -- claude`, which
+> permits `~/Library/Keychains` so OAuth login persists. Trade-off:
+> the agent can then read every Keychain entry the user owns — see
+> `examples/ai-agent-keychain.toml` header for the full picture.
 
 For non-Homebrew installs, drop the bundled examples in once:
 
@@ -245,7 +249,36 @@ shell command the agent fork-execs inherits the same sandbox.
 See the README's [matching example](../README.md#sandbox-an-ai-coding-agent-claude-code-opencode-aider-) for the full breakdown of what the profile blocks
 and how to tighten it further (stricter outbound, narrower read scope).
 
-## 9. Using it in CI/CD
+## 9. Wrapping a server application
+
+Four bundled profiles cover the common production shapes:
+
+```sh
+# HTTP / reverse proxy. Edit examples/web-server.toml's outbound_tcp
+# to list your upstream backends if reverse-proxying.
+sandkasten run web-server -- /usr/sbin/nginx -g "daemon off;"
+
+# Application API server. Bind one port, strict outbound to DB +
+# upstream APIs, no exec by default.
+sandkasten run api-server -- node /srv/api/dist/server.js
+
+# Database daemon. Bind one port, NO outbound, write only the data
+# dir + WAL + logs.
+sandkasten run database -- /usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main
+
+# Background worker. No inbound, narrow outbound to broker + DB.
+sandkasten run worker -- bundle exec sidekiq -q default
+```
+
+All four ship with `block_privilege_elevation`, `block_setid_syscalls`,
+`allow_exec = false`, and a tight `env.pass` whitelist. None set
+`cpu_seconds` or `wall_timeout_seconds` — those are footguns for
+long-running daemons. Edit the inbound port list and the outbound
+endpoint list in the bundled `examples/<profile>.toml` to match
+your topology before deploying. See the README's
+[server section](../README.md#sandbox-a-server-application-http-server-api-database-worker) for the full breakdown.
+
+## 11. Using it in CI/CD
 
 See the [GitHub Actions and GitLab examples in the README](../README.md#isolate-a-cicd-step-github-actions-example)
 for a full wrap of `npm ci` / test runs under a hardened profile. TL;DR:
@@ -275,7 +308,7 @@ Gotchas on hosted runners:
   to sharing the host netns (still secure for FS/syscalls, just no
   per-IP network enforcement).
 
-## 10. Other useful subcommands
+## 12. Other useful subcommands
 
 ```sh
 sandkasten templates             # list built-ins

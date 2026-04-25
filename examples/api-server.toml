@@ -1,0 +1,128 @@
+# Sandbox profile for an application API server (Express/Fastify/Koa,
+# FastAPI/Flask/Gunicorn, Spring Boot, Actix/Axum/Rocket, Echo/Gin,
+# Phoenix, Rails/Puma, …) that:
+#
+#   • listens on a fixed port (8080/3000/etc.)
+#   • talks to a database (Postgres, MySQL, Redis, …) on the LAN
+#   • talks to upstream APIs (Stripe, Twilio, S3, your own services)
+#   • writes logs + uploads to a state dir
+#
+# This is the most common server shape in production. The profile
+# locks down everything ELSE: read-only filesystem outside the state
+# dir, no exec (no shelling out), strict per-host outbound, env
+# whitelist that excludes infrastructure tokens unless explicitly
+# pulled in.
+#
+# Usage shape:
+#     sandkasten run api-server -- /opt/myapp/bin/myapp
+#     sandkasten run api-server -- node /srv/api/dist/server.js
+#     sandkasten run api-server -- gunicorn -b 0.0.0.0:8000 myapp.wsgi:app
+#
+# Notes:
+#   • If your runtime uses a JIT (V8/Node, Bun, JVM HotSpot, .NET,
+#     PHP JIT, LuaJIT) leave `no_w_x = false` (the default below).
+#     For AOT-compiled apps (Go, Rust, native C/C++) flip to true.
+#   • If your app shells out (running `git`, `convert`, `ffmpeg`,
+#     etc.), set `allow_exec = true`. Otherwise leave it off — that's
+#     a meaningful blast-radius reduction for code-injection bugs.
+
+name = "api-server"
+description = "Application API server. Strict per-host outbound to DB + upstream APIs, bind one port, write only to state dir, no exec by default."
+
+extends = "minimal-cli"
+
+[filesystem]
+read = [
+    "/etc/ssl",            # CA bundle for outbound TLS
+    "/etc/resolv.conf",    # DNS
+    "/usr/lib",
+    "/usr/share",
+    "/opt/myapp",          # the app's install dir — change to match your layout
+]
+
+read_write = [
+    "/var/log/myapp",      # change to your service's log dir
+    "/var/lib/myapp",      # state dir — uploads, sessions, etc.
+    "/run/myapp",
+    "/tmp",
+    "/private/tmp",
+]
+
+[network]
+allow_dns          = true
+allow_localhost    = true   # sidecar metrics endpoints, language-server IPC, healthchecks
+allow_unix_sockets = true   # talking to systemd, supervisord, syslog over UDS
+
+# Inbound: pick ONE port to bind. Wildcards on host. Replace with a
+# specific bind address ("127.0.0.1:8080") if a reverse proxy
+# fronts this server and external traffic shouldn't reach it directly.
+allow_inbound = true
+inbound_tcp = ["0.0.0.0:8080", "[::]:8080"]
+
+# Outbound: every external dependency, named explicitly.
+#
+# This is your supply-chain perimeter — if one of these gets pwned the
+# blast radius is contained to the listed services.
+outbound_tcp = [
+    # Database — typical shapes; pick one.
+    "db.internal:5432",          # Postgres
+    # "db.internal:3306",        # MySQL / MariaDB
+    # "redis.internal:6379",     # Redis
+    # "mongo.internal:27017",    # MongoDB
+    # "cassandra.internal:9042", # Cassandra
+
+    # Object storage / blob.
+    # "s3.amazonaws.com:443",
+    # "<bucket>.s3.<region>.amazonaws.com:443",
+    # "storage.googleapis.com:443",
+
+    # Message queue / pub-sub.
+    # "kafka-1.internal:9092",
+    # "rabbitmq.internal:5672",
+    # "nats.internal:4222",
+
+    # Common third-party APIs.
+    # "api.stripe.com:443",
+    # "api.twilio.com:443",
+    # "api.sendgrid.com:443",
+    # "hooks.slack.com:443",
+
+    # Observability.
+    # "ingest.sentry.io:443",
+    # "api.datadoghq.com:443",
+]
+
+[process]
+allow_fork = true
+allow_exec = false   # flip to true ONLY if the app legitimately shells out
+block_privilege_elevation = true
+block_setid_syscalls      = true
+no_w_x                    = false  # most app runtimes JIT — leave off unless your binary is AOT
+
+[env]
+# Notice what's NOT here: AWS_*, GITHUB_TOKEN, KUBECONFIG, NPM_TOKEN.
+# The app gets ONLY the secrets it actually needs. Add yours; keep
+# the list as small as possible — a leaked log line of `process.env`
+# can only spill what's in this whitelist.
+pass = [
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+
+    # Standard 12-factor config envelope.
+    "PORT", "NODE_ENV", "RAILS_ENV", "DJANGO_SETTINGS_MODULE",
+
+    # Database URL.
+    "DATABASE_URL", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD",
+    "REDIS_URL",
+
+    # App secrets — narrow this to what your app actually reads.
+    "JWT_SECRET", "SESSION_SECRET",
+    "STRIPE_API_KEY", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY",
+
+    # Observability.
+    "SENTRY_DSN", "DATADOG_API_KEY", "OTEL_EXPORTER_OTLP_ENDPOINT",
+]
+
+[limits]
+memory_mb    = 4096
+file_size_mb = 2048   # uploads, log rotation
+# No cpu_seconds, no wall_timeout_seconds — daemons run forever.

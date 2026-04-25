@@ -64,21 +64,30 @@ read_write = [
     # The project the agent is working on.
     "${CWD}",
 
-    # Agent state directories — Linux + macOS shapes for each tool.
-    # Paths that don't exist on the current platform are silently
-    # skipped by both backends.
+    # Agent state directories — XDG_CONFIG / XDG_DATA / dotfile / macOS
+    # Application Support shapes for each tool. Paths that don't exist
+    # on the current platform are silently skipped by both backends.
+    # Several agents also write SQLite WAL/log files under XDG_DATA
+    # (`~/.local/share/<agent>/`) on macOS, not just on Linux — opencode
+    # in particular fails with `Failed to run the query 'PRAGMA
+    # wal_checkpoint(PASSIVE)'` if its data dir isn't writable.
     "~/.config/claude",
+    "~/.local/share/claude",
     "~/.claude",
     "~/Library/Application Support/Claude",
     "~/.config/opencode",
+    "~/.local/share/opencode",
     "~/.opencode",
     "~/Library/Application Support/opencode",
     "~/.config/aider",
+    "~/.local/share/aider",
     "~/.aider",
     "~/Library/Application Support/aider",
     "~/.config/continue",
+    "~/.local/share/continue",
     "~/Library/Application Support/Continue",
     "~/.config/cursor-agent",
+    "~/.local/share/cursor-agent",
 
     # Generic per-user caches the agent's tooling reaches into.
     "~/.cache",
@@ -215,14 +224,31 @@ pass = [
     "GIT_AUTHOR_NAME",    "GIT_AUTHOR_EMAIL",
 ]
 
-# Reasonable defaults to constrain runaway agents.
-[limits]
-cpu_seconds          = 1800   # 30 min hard cap on a single run
-memory_mb            = 4096
-file_size_mb         = 256    # don't let it write a 10 GB file by accident
-# Bun-compiled agents (Claude Code's `claude` is one) spin up many
-# worker threads / cleanup hooks at session end. 256 was too tight
-# and surfaced as `EAGAIN: posix_spawn '/bin/sh'` from session-end
-# hook scripts on shutdown. 1024 leaves comfortable headroom.
-processes            = 1024
-wall_timeout_seconds = 3600   # 1 h
+# No `[limits]` block on purpose.
+#
+# An interactive agent session can run for hours, allocate gigabytes of
+# embeddings cache, and fork-spawn many compiler/test/LSP workers. The
+# usual rlimit knobs that make sense for a CI step are wrong here:
+#
+#   • `cpu_seconds` / `wall_timeout_seconds`   — kill long sessions.
+#   • `memory_mb`                              — surfaces as obscure
+#                                                 OOMs deep inside the
+#                                                 agent's runtime.
+#   • `processes` (RLIMIT_NPROC, macOS)        — per-real-user, not
+#                                                 per-process. The cap
+#                                                 covers your ENTIRE
+#                                                 logged-in session
+#                                                 (browser, editors,
+#                                                 daemons), so any
+#                                                 finite value can
+#                                                 EAGAIN when Bun-based
+#                                                 agents (Claude Code,
+#                                                 opencode) fork
+#                                                 internal workers.
+#   • `file_size_mb`                           — bites large model
+#                                                 caches and gzipped
+#                                                 build outputs.
+#
+# If you have a non-interactive use case (CI, batch run, scheduled
+# task), copy this profile and add a `[limits]` block tuned to that
+# workload — see `examples/ci-step.toml` and the QUICKSTART for shape.

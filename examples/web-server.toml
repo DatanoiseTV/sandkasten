@@ -1,0 +1,120 @@
+# Sandbox profile for an HTTP/HTTPS server — covers BOTH the static
+# / origin shape (nginx serving files, caddy serving a static site)
+# AND the reverse-proxy shape (nginx fronting microservices, caddy
+# proxying to a Go backend, traefik routing to several upstreams).
+#
+# The two shapes differ on ONE axis only: outbound. Static origin
+# servers don't dial out; reverse proxies do. Both are listed below
+# under [network] — pick whichever applies and delete the other.
+#
+# Posture (common to both shapes):
+#   • read static webroot + TLS certs + system libs, nothing else
+#   • write logs + a runtime state dir, NOT the webroot
+#   • bind 80 + 443
+#   • W^X enforced (no JIT in nginx/caddy/traefik/HAProxy)
+#   • setid syscalls + privilege elevation blocked
+#   • daemon-friendly limits (memory + file_size only — no CPU /
+#     wall-timeout, those would kill a long-running process)
+#
+# Run as your service user (NOT root). Bind to ports < 1024 either
+# via CAP_NET_BIND_SERVICE on Linux (`setcap`) or by reverse-proxying
+# from a privileged front-end. sandkasten itself does not grant
+# capabilities.
+#
+# Use:
+#     sandkasten run web-server -- /usr/sbin/nginx -g "daemon off;"
+#     sandkasten run web-server -- /usr/local/bin/caddy run --config /etc/caddy/Caddyfile
+#     sandkasten run web-server -- /usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
+
+name = "web-server"
+description = "HTTP/HTTPS origin or reverse proxy. Read webroot + certs, write logs only, bind 80/443, W^X on, setid blocked. Edit outbound list to match your topology."
+
+extends = "minimal-cli"
+
+[filesystem]
+read = [
+    "/etc/ssl",
+    "/etc/letsencrypt",
+    "/etc/nginx",
+    "/etc/caddy",
+    "/etc/traefik",
+    "/etc/haproxy",
+    "/var/www",
+    "/srv",
+    "/usr/share/nginx",
+    "/usr/share/caddy",
+]
+
+read_write = [
+    "/var/log/nginx",
+    "/var/log/caddy",
+    "/var/log/traefik",
+    "/var/log/haproxy",
+    "/var/cache/nginx",
+    "/var/lib/caddy",
+    "/var/lib/nginx",
+    "/var/lib/traefik",
+    "/run",
+    "/tmp",
+    "/private/tmp",
+]
+
+[network]
+allow_dns          = true   # backends and ACME both need DNS
+allow_localhost    = true   # talk to a backend on 127.0.0.1 (FPM, gunicorn, …)
+allow_unix_sockets = true   # PHP-FPM, gunicorn, etc., over UDS
+
+# Inbound — the listening side. Strict per-port. Wildcard host means
+# "any interface"; replace with a specific address (e.g. "10.0.0.5:443")
+# if you want to bind only to a private interface.
+allow_inbound = true
+inbound_tcp = [
+    "0.0.0.0:80",  "[::]:80",
+    "0.0.0.0:443", "[::]:443",
+]
+
+# Outbound — REVERSE-PROXY mode.
+#
+# Replace these with YOUR upstream list, scoped as tightly as you can.
+# Internal hostnames + ports work; so do private CIDRs (Linux only —
+# macOS Seatbelt widens specific hosts to `*:443`, see README).
+#
+# If you operate a STATIC ORIGIN with no proxying, delete the entire
+# `outbound_tcp` block below (and `outbound_tcp = []` is enough — the
+# server still has localhost via `allow_localhost`).
+outbound_tcp = [
+    # Replace with your upstreams. Examples:
+    # "api-internal.svc.cluster.local:8080",
+    # "10.0.0.20:5000",
+    # "auth.internal:443",
+
+    # ACME / Let's Encrypt issuance — keep these if your server
+    # auto-renews TLS certs. Drop them if certs come from another
+    # process (cert-manager, certbot in a different sandbox).
+    "acme-v02.api.letsencrypt.org:443",
+    "r3.o.lencr.org:80",      # OCSP responder
+    "x1.c.lencr.org:80",      # CRL distribution
+    "x2.c.lencr.org:80",
+]
+
+[process]
+allow_fork = true    # nginx/apache pre-fork workers; caddy/traefik don't but extra fork capacity is harmless
+allow_exec = false   # the server should never spawn helper binaries; turn on if your config does (CGI, hooks)
+block_privilege_elevation = true
+block_setid_syscalls      = true
+no_w_x                    = true   # nginx/caddy/traefik/haproxy are AOT — safe
+
+[env]
+pass = [
+    "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "TMPDIR",
+    "NGINX_PID", "CADDY_ADMIN", "TRAEFIK_PROVIDERS_FILE",
+]
+
+# A long-running daemon needs NO cpu_seconds and NO
+# wall_timeout_seconds (both would kill the process at an arbitrary
+# moment — RLIMIT_CPU=0 means "kill immediately", not "unlimited";
+# only omitting the key means unlimited). memory_mb + file_size_mb
+# are the meaningful caps for a server.
+[limits]
+memory_mb    = 2048
+file_size_mb = 1024   # large enough for log rotation chunks

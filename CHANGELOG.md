@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.4.2 — 2026-04-25
+
+Bug fixes, two new opt-in agent profiles, and a new family of
+server-application example profiles.
+
+### New: server-application profiles
+
+Four bundled profiles for the common production server shapes — each
+with its own inbound port list, narrow outbound, daemon-friendly
+limits (no `cpu_seconds` / no `wall_timeout_seconds`),
+`block_privilege_elevation` + `block_setid_syscalls` on, and
+`allow_exec = false` by default:
+
+- **`web-server`** — nginx / caddy / traefik / haproxy. Origin or
+  reverse proxy. Bind 80/443, write only logs, optional outbound to
+  upstream backends + ACME endpoints.
+- **`api-server`** — Express / FastAPI / Spring / Rails / Axum.
+  Bind one port, strict outbound to DB + upstream APIs, env-pass
+  list scoped to app secrets only (no AWS / GH / Kube tokens).
+- **`database`** — Postgres / MySQL / Redis / Mongo. Bind one port,
+  **no outbound**, write only data dir + WAL + log dir, no DNS.
+- **`worker`** — Sidekiq / Celery / BullMQ / native Go worker. No
+  inbound, narrow outbound to broker + DB + APIs.
+
+Bundled and installed via `sandkasten install-profiles`. Each
+profile's outbound list is commented as a starting point — edit to
+match your topology before deploying. README has the full breakdown
+under "Example use cases".
+
+### New: `ai-agent-keychain` opt-in variant
+
+Same posture as `ai-agent` but permits `~/Library/Keychains` (read +
+write) and adds Mach services for `securityd` IPC, so agents that
+default to OAuth → macOS Keychain (Claude Code, Cursor Agent) can
+complete `/login` and persist a token across sessions. Pick this
+profile only if you can't use `ANTHROPIC_API_KEY` — the trade-off is
+that a compromised agent can read every Keychain entry the user owns,
+which `ai-agent` deliberately prevents. Bundled and installed via
+`sandkasten install-profiles`.
+
+### `ai-agent.toml` fixes
+
+- **`[limits]` block removed from the AI-agent example profile.** The
+  old block (`processes = 1024`, `cpu_seconds = 1800`,
+  `memory_mb = 4096`, `wall_timeout_seconds = 3600`,
+  `file_size_mb = 256`) was wrong for interactive agent use:
+  - On macOS, `RLIMIT_NPROC` is **per-real-user**, not per-process.
+    Setting it from inside the sandbox child caps the entire logged-in
+    session (browser, editors, daemons, all of it). Bumping the value
+    just delays the inevitable: as soon as Bun-based agents (Claude
+    Code, opencode) fork their internal worker pool, `posix_spawn`
+    returns `EAGAIN` and the agent dies before drawing its TUI.
+  - `cpu_seconds` and `wall_timeout_seconds` kill long sessions at
+    arbitrary times.
+  - `memory_mb` surfaces as obscure OOMs deep inside the agent's V8
+    or Bun runtime, not at any point under user control.
+- The example now ships with no `[limits]` table and a comment block
+  explaining when (and where) you'd want to add one back — primarily
+  CI / non-interactive use.
+- Reported as: `sandkasten -v run ai-agent -- opencode` →
+  `spawnSync … EAGAIN` on a clean macOS install.
+- Also added `~/.local/share/{claude,opencode,aider,continue,cursor-agent}`
+  to `read_write` — opencode in particular writes a SQLite WAL there
+  even on macOS and was failing with `Failed to run the query 'PRAGMA
+  wal_checkpoint(PASSIVE)'`.
+
+Reinstall the bundled profiles to pick up these changes:
+`brew upgrade sandkasten` or `sandkasten install-profiles --user --force`.
+
 ## v0.4.1 — 2026-04-25
 
 Bug fix on top of v0.4.0:

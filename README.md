@@ -229,6 +229,15 @@ alias opencode='sandkasten run ai-agent -- opencode'
 > Set `ANTHROPIC_API_KEY` in the outer shell — the profile's
 > `env.pass` whitelist passes it through. Run
 > `sandkasten -vvv run ai-agent -- claude` to see kernel denials.
+>
+> **If you can't use a model API key** (no key handy, OAuth-only
+> provider, etc.), there's an opt-in variant `ai-agent-keychain`
+> which permits `~/Library/Keychains` so OAuth login can persist a
+> token. The trade-off is real — a compromised agent can read every
+> Keychain entry the user owns — so `ai-agent` (with
+> `ANTHROPIC_API_KEY`) remains the recommended default. Run
+> `sandkasten run ai-agent-keychain -- claude` instead, then on
+> first launch complete `/login` once.
 
 What the profile (`extends = "minimal-cli"`) actually does:
 
@@ -259,9 +268,14 @@ What the profile (`extends = "minimal-cli"`) actually does:
 - **`env.pass` whitelisted** — the agent sees its own model API
   keys (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc.) but not
   `GITHUB_TOKEN`, `AWS_*`, `KUBECONFIG`, `NPM_TOKEN`, `PYPI_TOKEN`.
-- **`[limits]`** — 30 min CPU, 4 GiB memory, 256 MiB file-size cap,
-  256 processes, 1 h wall-clock — sane backstops against a runaway
-  loop.
+- **No `[limits]` block** for the interactive case. Hard CPU /
+  wall-clock / memory caps kill long agent sessions at arbitrary
+  times, and on macOS `RLIMIT_NPROC` is per-real-user (not
+  per-process), so any cap you set covers your whole logged-in
+  session and Bun-based agents will EAGAIN on `posix_spawn` as soon
+  as they fork their worker pool. If you're driving the agent from
+  CI / batch, copy the profile and add a `[limits]` block tuned to
+  that workload.
 
 If you want stricter network posture: drop everything from
 `outbound_tcp` except the model API actually in use; the agent will
@@ -271,6 +285,64 @@ If you want stricter filesystem posture: change `read = ["/"]` to a
 narrower list (typically `${CWD}`, `/usr/lib`, `/usr/share`,
 `/Library/Apple/System`, `/private/var/db/dyld`) so even the agent
 can't read other projects on your laptop.
+
+### Sandbox a server application (HTTP server, API, database, worker)
+
+Four bundled profiles cover the common production server shapes.
+All four reduce the blast radius of a code-injection or supply-chain
+compromise to roughly "what the listed network endpoints + writable
+paths allow", which is usually a much narrower set than the host the
+process otherwise has access to.
+
+```sh
+# HTTP / reverse proxy — bind 80/443, write only logs, optional
+# outbound to upstream backends (edit examples/web-server.toml).
+sandkasten run web-server -- /usr/sbin/nginx -g "daemon off;"
+sandkasten run web-server -- /usr/local/bin/caddy run
+
+# Application API — bind one port, strict outbound to DB + upstream
+# APIs only, no exec by default (no shelling out for ImageMagick /
+# ffmpeg / git unless you opt in).
+sandkasten run api-server -- node /srv/api/dist/server.js
+sandkasten run api-server -- gunicorn -b 0.0.0.0:8000 myapp.wsgi:app
+
+# Database daemon — bind one port, NO outbound, write only the data
+# dir + WAL + log dir. memory_mb sized for the buffer pool, not a
+# generic small number.
+sandkasten run database -- /usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main
+
+# Background worker / queue consumer — no inbound, narrow outbound
+# to broker + DB + APIs.
+sandkasten run worker -- bundle exec sidekiq -q default
+sandkasten run worker -- celery -A myapp worker -l info
+```
+
+What's locked down across all four:
+
+- **No `cpu_seconds`, no `wall_timeout_seconds`** — daemons run
+  forever; both rlimits are footguns when set ("0" is "kill now",
+  not "unlimited").
+- **`block_privilege_elevation` + `block_setid_syscalls`** — even a
+  fully-RCE'd process can't `sudo` or call `setuid()` to gain
+  another user's permissions.
+- **`allow_exec = false` by default** — no shelling out. A SQL
+  injection that pivots to RCE can't exec `bash`, `nc`, `wget`,
+  `curl`. Flip per-profile when your app legitimately invokes
+  helpers (CGI, ImageMagick, ffmpeg).
+- **`no_w_x = true`** for AOT engines (nginx/caddy/Postgres/Redis),
+  off for JIT runtimes (Node/Bun/JVM/V8). The profile sets the
+  right default for its expected workload.
+- **`env.pass` whitelist** — the app gets `DATABASE_URL` and
+  `STRIPE_API_KEY`, NOT `AWS_*`, `KUBECONFIG`, `GITHUB_TOKEN`. A
+  log line of `process.env` can only spill what's whitelisted.
+
+Profiles to copy and adapt:
+[`examples/web-server.toml`](examples/web-server.toml),
+[`examples/api-server.toml`](examples/api-server.toml),
+[`examples/database.toml`](examples/database.toml),
+[`examples/worker.toml`](examples/worker.toml).
+Each has the upstream/inbound list commented as a starting point —
+edit the entries to match your topology before deploying.
 
 ### Sandbox a Chromium-family browser for a one-off session
 
