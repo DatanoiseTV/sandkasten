@@ -5,11 +5,22 @@
 //! compact summary. Intentionally rate-limited (runs once, bounded window) so
 //! even apps that hit thousands of denials produce a small digest.
 
+use crate::events;
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::Duration;
 
-pub fn show_since(window: Duration, child_pid: Option<i32>) {
+/// Capture sandbox denials from the last `window` and either print a
+/// human summary, or emit one structured `denial` event per unique
+/// (op, target) pair into the events sink, or both. `print_summary`
+/// controls the human side; the events side is gated globally on
+/// `events::enabled()`.
+pub fn show_since(
+    window: Duration,
+    child_pid: Option<i32>,
+    print_summary: bool,
+    profile_name: &str,
+) {
     let seconds = window.as_secs().max(1);
     // Sandbox denial events are emitted by the kernel (sender="kernel",
     // category="Sandbox") with the denied process's PID embedded in the
@@ -79,29 +90,40 @@ pub fn show_since(window: Duration, child_pid: Option<i32>) {
     }
 
     if counts.is_empty() {
-        eprintln!(
-            "sandkasten │ no kernel denial events in the capture window.\n\
-             sandkasten │ note: macOS only logs default-deny fallthroughs — explicit\n\
-             sandkasten │       `deny` rules that match a specific path are silent by design."
-        );
+        if print_summary {
+            eprintln!(
+                "sandkasten │ no kernel denial events in the capture window.\n\
+                 sandkasten │ note: macOS only logs default-deny fallthroughs — explicit\n\
+                 sandkasten │       `deny` rules that match a specific path are silent by design."
+            );
+        }
         return;
     }
 
-    eprintln!("sandkasten │ kernel denials ({} unique):", counts.len());
     // Sort by frequency (descending) then op+target.
-    let mut entries: Vec<_> = counts.into_iter().collect();
+    let mut entries: Vec<((String, String), usize)> = counts.into_iter().collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    const MAX_ROWS: usize = 30;
-    for ((op, target), count) in entries.iter().take(MAX_ROWS) {
-        let target_trunc = truncate(target, 80);
-        eprintln!("    {count:>5}× {op:<24} {target_trunc}");
+    // Emit structured events for every unique pair (no MAX_ROWS cap —
+    // event consumers want the full picture). The human summary below
+    // still truncates.
+    for ((op, target), count) in &entries {
+        events::denial(profile_name, op, target, *count, child_pid);
     }
-    if entries.len() > MAX_ROWS {
-        eprintln!(
-            "    … {} more unique denial rows suppressed",
-            entries.len() - MAX_ROWS
-        );
+
+    if print_summary {
+        eprintln!("sandkasten │ kernel denials ({} unique):", entries.len());
+        const MAX_ROWS: usize = 30;
+        for ((op, target), count) in entries.iter().take(MAX_ROWS) {
+            let target_trunc = truncate(target, 80);
+            eprintln!("    {count:>5}× {op:<24} {target_trunc}");
+        }
+        if entries.len() > MAX_ROWS {
+            eprintln!(
+                "    … {} more unique denial rows suppressed",
+                entries.len() - MAX_ROWS
+            );
+        }
     }
 }
 

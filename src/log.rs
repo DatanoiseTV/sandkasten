@@ -51,11 +51,16 @@ pub fn from_flags(verbose: u8, quiet: bool) -> Level {
     }
 }
 
+// `at!` is only consumed by the bin crate's runtime paths; the lib
+// build sees no callers and would otherwise warn about both the
+// macro and the re-export. Suppress on the lib side.
+#[allow(unused_macros)]
 macro_rules! at {
     ($lvl:expr) => {
         crate::log::level() >= $lvl
     };
 }
+#[allow(unused_imports)]
 pub(crate) use at;
 
 pub fn info(fmt: std::fmt::Arguments<'_>) {

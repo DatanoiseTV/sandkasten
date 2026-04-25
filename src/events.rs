@@ -220,6 +220,36 @@ pub fn run_end(exit_code: i32, wall_ms: u128) {
     write_line(&s);
 }
 
+/// One kernel-denied access. Emitted from the post-hoc denial capture
+/// (macOS `log show`, Linux audit/journal) once per unique
+/// (operation, target). `count` is how many times that pair was hit
+/// in the capture window. The optional `pid` is the denied process's
+/// PID — usually the sandbox child or one of its descendants.
+///
+/// The optional macOS menu-bar UI consumes these to show the
+/// "always-allow / once / always-deny / customize" prompt.
+pub fn denial(profile: &str, op: &str, target: &str, count: usize, pid: Option<i32>) {
+    if !enabled() {
+        return;
+    }
+    let (ts, ts_ms) = now_iso8601();
+    let mut s = String::with_capacity(192 + target.len());
+    s.push('{');
+    push_field(&mut s, "event", "denial", true);
+    push_field(&mut s, "ts", &ts, false);
+    push_field_raw(&mut s, "ts_ms", &ts_ms.to_string(), false);
+    push_field_raw(&mut s, "pid", &std::process::id().to_string(), false);
+    if let Some(p) = pid {
+        push_field_raw(&mut s, "denied_pid", &p.to_string(), false);
+    }
+    push_field(&mut s, "profile", profile, false);
+    push_field(&mut s, "op", op, false);
+    push_field(&mut s, "target", target, false);
+    push_field_raw(&mut s, "count", &count.to_string(), false);
+    s.push('}');
+    write_line(&s);
+}
+
 /// Non-fatal warning sandkasten itself emits (e.g. "Landlock can't
 /// enforce deny path X inside allow Y").
 #[allow(dead_code)]
