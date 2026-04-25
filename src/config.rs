@@ -1289,20 +1289,31 @@ pub fn system_install_dir() -> PathBuf {
     }
 }
 
-/// Resolve a profile reference into a path. Search order:
-///   1. exact path if it contains `/` or ends in `.toml`
-///   2. `$PWD/<name>.toml`
-///   3. user dir: `$XDG_CONFIG_HOME/sandkasten/profiles/<name>.toml`
-///      (macOS: `~/Library/Application Support/sandkasten/profiles/`)
-///   4. system dirs: `/etc/sandkasten/profiles/`,
-///      `/Library/Application Support/sandkasten/profiles/`,
-///      `$(brew --prefix)/share/sandkasten/profiles/`,
-///      `/usr/share/sandkasten/profiles/`
+/// Resolve a profile reference into a path. Two regimes:
 ///
-/// Earlier entries win, so a user copy of `ai-agent.toml` shadows a
-/// system one and a `/etc` override shadows a package-shipped default.
+/// 1. **Path-shaped** — anything containing `/` (i.e. an actual path,
+///    relative or absolute) is read literally.  No search path consult
+///    even on a "file not found" error: paths are unambiguous.
+///
+/// 2. **Bare name** — a plain `ai-agent` or `ai-agent.toml` (no slash)
+///    is treated as a name to look up. The trailing `.toml` is
+///    stripped if the user typed one — a common natural mistake — so
+///    `ai-agent`, `ai-agent.toml`, and `./ai-agent.toml` all work
+///    consistently. The lookup walks:
+///
+///       - `./<name>.toml`
+///       - user dir: `$XDG_CONFIG_HOME/sandkasten/profiles/<name>.toml`
+///         (macOS: `~/Library/Application Support/sandkasten/profiles/`)
+///       - system dirs: `/etc/sandkasten/profiles/`,
+///         `/Library/Application Support/sandkasten/profiles/`,
+///         `$(brew --prefix)/share/sandkasten/profiles/`,
+///         `/usr/share/sandkasten/profiles/`
+///
+///    Earlier entries shadow later ones, so a user copy of
+///    `ai-agent.toml` wins over a system one and a `/etc` override
+///    wins over a package-shipped default.
 pub fn resolve_profile_path(name: &str) -> Result<PathBuf> {
-    if name.contains('/') || name.ends_with(".toml") {
+    if name.contains('/') {
         let p = PathBuf::from(name);
         if p.exists() {
             return Ok(p);
@@ -1310,20 +1321,25 @@ pub fn resolve_profile_path(name: &str) -> Result<PathBuf> {
         return Err(anyhow!("profile file not found: {}", p.display()));
     }
 
-    let here = PathBuf::from(format!("{name}.toml"));
+    // Bare name. Strip a trailing `.toml` if present — `ai-agent` and
+    // `ai-agent.toml` should both resolve through the search path.
+    let bare = name.strip_suffix(".toml").unwrap_or(name);
+    let filename = format!("{bare}.toml");
+
+    let here = PathBuf::from(&filename);
     if here.exists() {
         return Ok(here);
     }
 
     if let Some(user) = user_profile_dir() {
-        let p = user.join(format!("{name}.toml"));
+        let p = user.join(&filename);
         if p.exists() {
             return Ok(p);
         }
     }
 
     for dir in system_profile_dirs() {
-        let p = dir.join(format!("{name}.toml"));
+        let p = dir.join(&filename);
         if p.exists() {
             return Ok(p);
         }
@@ -1475,6 +1491,41 @@ mod tests {
             exe_dir: Some(PathBuf::from("/opt/tool/bin")),
             home: Some(PathBuf::from("/home/alice")),
         }
+    }
+
+    #[test]
+    fn resolve_profile_walks_search_path_for_bare_name_with_toml_suffix() {
+        // Regression for: `sandkasten run ai-agent.toml -- claude`
+        // failing with "profile file not found" even though
+        // ai-agent.toml is installed in the user dir. Before the fix
+        // a `.toml` extension shortcut to the literal-path branch
+        // and bypassed the search path entirely.
+        let tmp =
+            std::env::temp_dir().join(format!("sandkasten-resolve-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let target = tmp.join("foo.toml");
+        std::fs::write(&target, "name = \"foo\"\n").unwrap();
+
+        // Simulate "user dir" by leaning on the actual lookup with
+        // a path argument. We can't override user_profile_dir from
+        // a unit test without significant refactor, so probe the
+        // path branch directly: a `/`-shaped reference still works.
+        let by_path = resolve_profile_path(target.to_str().unwrap()).unwrap();
+        assert_eq!(by_path, target);
+
+        // Bare `foo.toml` (no slash, has extension) should NOT take
+        // the literal-path shortcut — it walks the search list. We
+        // can't insert into the user dir from tests, but we CAN
+        // confirm the not-found error mentions the search path,
+        // which proves we passed through the new branch.
+        let err = resolve_profile_path("definitely-not-installed-xyz.toml").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Searched (in order)"),
+            "expected search-path enumeration, got: {msg}"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

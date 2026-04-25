@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.4.1 — 2026-04-25
+
+Bug fix on top of v0.4.0:
+
+- **`sandkasten run ai-agent.toml -- claude`** (or any bare filename
+  ending in `.toml`) now walks the search path the same way bare
+  names without the extension do. Before this fix, the `.toml`
+  suffix shortcut to a literal-path read and bypassed the
+  user / system profile dirs entirely, so a profile installed via
+  `sandkasten install-profiles --user` was only reachable as either
+  the bare name (`ai-agent`) or an explicit relative path
+  (`./ai-agent.toml`). Reported in the wild by a user who typed
+  what felt natural and got "profile file not found".
+- Path-shaped references (anything containing `/`) still take the
+  literal branch — `./ai-agent.toml`, `/etc/foo/bar.toml` are
+  unambiguous and never search.
+- Regression test in `config::tests` locks the new behaviour.
+
+Also: release tarballs now include the bundled `examples/` directory,
+so `brew install sandkasten` (and direct-download users) get
+`<HOMEBREW_PREFIX>/share/sandkasten/profiles/ai-agent.toml`
+automatically.
+
 ## v0.4.0 — 2026-04-25
 
 Security and UX parity between macOS and Linux is now the bar. This
