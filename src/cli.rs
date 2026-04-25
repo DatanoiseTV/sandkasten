@@ -188,6 +188,47 @@ pub enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Install bundled example profiles to the user or system profile
+    /// directory so they can be referenced by name.
+    ///
+    /// User scope (default) is what `XDG_CONFIG_HOME` (Linux) /
+    /// `~/Library/Application Support/sandkasten/profiles/` (macOS)
+    /// resolves to — no privileges needed. System scope writes to
+    /// `/etc/sandkasten/profiles/` on Linux or
+    /// `/Library/Application Support/sandkasten/profiles/` on macOS,
+    /// and typically requires `sudo`.
+    ///
+    /// After install:
+    ///     sandkasten run ai-agent -- claude
+    /// resolves the profile by name from the install dir, no path
+    /// needed in the invocation.
+    InstallProfiles {
+        /// Install to the system profile dir instead of the per-user one.
+        /// Needs `sudo` because the target dir is `/etc/sandkasten/...`
+        /// (Linux) or `/Library/Application Support/sandkasten/...`
+        /// (macOS).
+        #[arg(long, conflicts_with = "user")]
+        system: bool,
+
+        /// Install to the per-user profile dir. This is the default
+        /// when neither `--system` nor `--user` is given; the flag is
+        /// mostly here to make scripted installs explicit.
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
+
+        /// Overwrite existing destination files. By default, install
+        /// refuses to clobber a profile that's already there so a
+        /// careless re-install doesn't blow away local edits.
+        #[arg(long)]
+        force: bool,
+
+        /// Optional source directory of `.toml` files to copy in
+        /// addition to the bundled examples. Files in the source dir
+        /// override bundled ones with the same name.
+        #[arg(long, short = 's')]
+        source: Option<PathBuf>,
+    },
+
     /// Validate a profile without running anything.
     Check { profile: String },
 

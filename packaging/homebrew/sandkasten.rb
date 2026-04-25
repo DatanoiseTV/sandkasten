@@ -58,6 +58,18 @@ class Sandkasten < Formula
     end
     zsh_completion.install "completions/_sandkasten" if File.exist?("completions/_sandkasten")
     fish_completion.install "completions/sandkasten.fish" if File.exist?("completions/sandkasten.fish")
+
+    # Drop the bundled example profiles into Homebrew's share/ tree.
+    # `sandkasten run`'s search path includes
+    # `<HOMEBREW_PREFIX>/share/sandkasten/profiles/`, so once they're
+    # here, `sandkasten run ai-agent -- claude` works from any cwd
+    # without an explicit path or a separate `install-profiles` step.
+    profiles = Dir.glob("examples/*.toml")
+    if profiles.any?
+      target = pkgshare/"profiles"
+      target.mkpath
+      profiles.each { |f| target.install f }
+    end
   end
 
   test do

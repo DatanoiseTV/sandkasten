@@ -9,6 +9,14 @@ pub const MINIMAL_CLI: &str = include_str!("../templates/minimal-cli.toml");
 pub const BROWSER: &str = include_str!("../templates/browser.toml");
 pub const ELECTRON: &str = include_str!("../templates/electron.toml");
 
+/// Bundled example profiles — TOML bodies compiled into the binary so
+/// `sandkasten install-profiles` can drop them onto disk without
+/// needing the source tree. Distinct from `builtin()` above: those
+/// are *templates* you can `extends = "..."`; these are
+/// *example profiles* you can run as-is or copy and edit.
+pub const BUNDLED_EXAMPLES: &[(&str, &str)] =
+    &[("ai-agent", include_str!("../examples/ai-agent.toml"))];
+
 /// Names of the built-in templates, in the order they appear in the
 /// CLI / web-UI listings.
 const NAMES: &[&str] = &[

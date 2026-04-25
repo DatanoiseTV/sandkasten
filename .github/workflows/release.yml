@@ -84,6 +84,13 @@ jobs:
           cp "${BIN}" "dist/${NAME}/sandkasten"
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${NAME}/"
 
+          # Bundle the example profiles so `brew install` (and direct-
+          # download users) get them at <prefix>/share/sandkasten/profiles/
+          # without a separate `sandkasten install-profiles` step.
+          if [[ -d examples ]]; then
+            cp -r examples "dist/${NAME}/examples"
+          fi
+
           # Shell completions — the binary runs as part of the build, so
           # only generate them on a native runner (same arch + OS).
           if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" && "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] ||

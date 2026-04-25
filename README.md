@@ -621,6 +621,7 @@ sandkasten run <profile> [--timeout 30s] [--verify] [-C <cwd>] -- <cmd> [args...
 sandkasten shell <profile>                 # interactive sandboxed shell, $SANDKASTEN_PROFILE set
 sandkasten sshd <profile>                  # for sshd ForceCommand — see Use cases
 sandkasten init [--template <name>] [-o <path>]
+sandkasten install-profiles [--system|--user] [--force] [-s <src-dir>]
 sandkasten learn [--base <tpl>] [-o <out.toml>] [--auto-system] [--yes|-y] -- <cmd>
 sandkasten check <profile>                 # validate without running
 sandkasten render <profile>                # print generated policy (+ policy-hash trailer)
@@ -637,6 +638,45 @@ sandkasten ui [--port 4173]                # local web UI
 Verbosity: default is silent, `-v` adds lifecycle, `-vv` adds a compact
 rule summary, `-vvv` adds the full generated policy plus post-run
 kernel denial capture (macOS).
+
+### Profile resolution
+
+When you write `sandkasten run <name> -- …`, sandkasten resolves
+`<name>` against this search order, first hit wins:
+
+1. **An explicit path** — `<name>` contains `/` or ends in `.toml`,
+   read literally.
+2. **`./<name>.toml`** — current working directory.
+3. **User profile dir** —
+   `$XDG_CONFIG_HOME/sandkasten/profiles/` on Linux,
+   `~/Library/Application Support/sandkasten/profiles/` on macOS.
+4. **System profile dirs**, in order:
+   - `/etc/sandkasten/profiles/` (admin overrides; Linux convention)
+   - `/Library/Application Support/sandkasten/profiles/` (admin
+     overrides; macOS convention)
+   - `/opt/homebrew/share/sandkasten/profiles/` (Homebrew on Apple Silicon)
+   - `/usr/local/share/sandkasten/profiles/` (Homebrew on Intel,
+     hand-built `make install`)
+   - `/home/linuxbrew/.linuxbrew/share/sandkasten/profiles/` (Linuxbrew)
+   - `/usr/share/sandkasten/profiles/` (Linux distro packaging)
+
+Earlier entries shadow later ones, so a per-user copy wins over a
+system one and an `/etc` override wins over a Homebrew-shipped
+default. `sandkasten list` enumerates everything visible from the
+current process's view.
+
+`brew install sandkasten` drops the bundled example profiles
+(currently just `ai-agent.toml`) into
+`<HOMEBREW_PREFIX>/share/sandkasten/profiles/` so
+`sandkasten run ai-agent -- claude` works out of the box.
+
+For non-Homebrew installs, drop bundled profiles in by hand:
+
+```sh
+sandkasten install-profiles            # writes to user dir, no sudo needed
+sudo sandkasten install-profiles --system   # writes to /etc or /Library
+sandkasten install-profiles -s ./my-org/profiles --user  # add a custom dir
+```
 
 ## Profile schema
 

@@ -1249,10 +1249,58 @@ pub fn parse_endpoint(s: &str) -> Result<Endpoint> {
     Ok(Endpoint { host, port })
 }
 
-/// Resolve a profile reference into a path:
-///   1. exact path if contains `/` or ends in `.toml`
+/// Per-user profile directory. Linux: `$XDG_CONFIG_HOME/sandkasten/profiles/`.
+/// macOS: `~/Library/Application Support/sandkasten/profiles/`.
+pub fn user_profile_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("sandkasten").join("profiles"))
+}
+
+/// System-wide profile search path. Returns the directories we look
+/// in when a name isn't in PWD or the user dir, in order. Admin
+/// overrides (`/etc`, `/Library/Application Support`) come before
+/// package-managed defaults (Homebrew share dirs, `/usr/share`) so a
+/// site customisation wins over the distro/package copy.
+pub fn system_profile_dirs() -> Vec<PathBuf> {
+    [
+        // Linux: admin / sysadmin overrides under /etc.
+        "/etc/sandkasten/profiles",
+        // macOS: system-wide config (admin-managed).
+        "/Library/Application Support/sandkasten/profiles",
+        // Homebrew prefixes — Apple Silicon, Intel, Linuxbrew.
+        "/opt/homebrew/share/sandkasten/profiles",
+        "/usr/local/share/sandkasten/profiles",
+        "/home/linuxbrew/.linuxbrew/share/sandkasten/profiles",
+        // Linux distro packaging convention.
+        "/usr/share/sandkasten/profiles",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+/// The single canonical install destination for `--system`. This is
+/// where `sandkasten install-profiles --system` writes; the search
+/// order above also picks this dir up first.
+pub fn system_install_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support/sandkasten/profiles")
+    } else {
+        PathBuf::from("/etc/sandkasten/profiles")
+    }
+}
+
+/// Resolve a profile reference into a path. Search order:
+///   1. exact path if it contains `/` or ends in `.toml`
 ///   2. `$PWD/<name>.toml`
-///   3. `$XDG_CONFIG_HOME/sandkasten/profiles/<name>.toml`
+///   3. user dir: `$XDG_CONFIG_HOME/sandkasten/profiles/<name>.toml`
+///      (macOS: `~/Library/Application Support/sandkasten/profiles/`)
+///   4. system dirs: `/etc/sandkasten/profiles/`,
+///      `/Library/Application Support/sandkasten/profiles/`,
+///      `$(brew --prefix)/share/sandkasten/profiles/`,
+///      `/usr/share/sandkasten/profiles/`
+///
+/// Earlier entries win, so a user copy of `ai-agent.toml` shadows a
+/// system one and a `/etc` override shadows a package-shipped default.
 pub fn resolve_profile_path(name: &str) -> Result<PathBuf> {
     if name.contains('/') || name.ends_with(".toml") {
         let p = PathBuf::from(name);
@@ -1267,19 +1315,34 @@ pub fn resolve_profile_path(name: &str) -> Result<PathBuf> {
         return Ok(here);
     }
 
-    if let Some(conf) = dirs::config_dir() {
-        let p = conf
-            .join("sandkasten")
-            .join("profiles")
-            .join(format!("{name}.toml"));
+    if let Some(user) = user_profile_dir() {
+        let p = user.join(format!("{name}.toml"));
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+
+    for dir in system_profile_dirs() {
+        let p = dir.join(format!("{name}.toml"));
         if p.exists() {
             return Ok(p);
         }
     }
 
     Err(anyhow!(
-        "profile {name:?} not found (looked in ./, $XDG_CONFIG_HOME/sandkasten/profiles/). \
-         Use `sandkasten templates` to see built-ins."
+        "profile {name:?} not found. Searched (in order): ./, \
+         {user_path}, {sys_paths}. Run `sandkasten templates` for the \
+         built-in template list, or `sandkasten install-profiles` to \
+         drop the bundled examples (e.g. `ai-agent.toml`) into the \
+         user profile dir.",
+        user_path = user_profile_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<no user config dir>".to_string()),
+        sys_paths = system_profile_dirs()
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
     ))
 }
 

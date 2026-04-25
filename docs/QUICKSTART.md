@@ -199,15 +199,31 @@ controlling terminal" container-escape primitive.
 Agentic CLI tools (Claude Code, opencode, aider, Continue, Cursor
 Agent, …) inherit your full shell environment by default — `~/.ssh`,
 `~/.aws`, `GITHUB_TOKEN`, cached sudo creds. A ready-made profile
-lives at [`examples/ai-agent.toml`](../examples/ai-agent.toml):
+lives at [`examples/ai-agent.toml`](../examples/ai-agent.toml).
+
+If you installed sandkasten via Homebrew, the example is already on
+the search path under `<HOMEBREW_PREFIX>/share/sandkasten/profiles/`,
+so:
 
 ```sh
-sandkasten run examples/ai-agent.toml -- claude
-sandkasten run examples/ai-agent.toml -- opencode
+sandkasten run ai-agent -- claude        # ← bare name, no path needed
+sandkasten run ai-agent -- opencode
 
-# Or alias so the original name "just works":
-alias claude='sandkasten run ~/path/to/ai-agent.toml -- claude'
+# Alias so the original name "just works":
+alias claude='sandkasten run ai-agent -- claude'
 ```
+
+For non-Homebrew installs, drop the bundled examples in once:
+
+```sh
+sandkasten install-profiles            # writes to user profile dir
+# or, host-wide:
+sudo sandkasten install-profiles --system
+```
+
+After that, `sandkasten run ai-agent -- claude` resolves the bare
+name from the user / `/etc/sandkasten/profiles/` / Homebrew share
+path. `sandkasten list` enumerates everything visible.
 
 The profile gives the agent: read-anywhere, write-only-project +
 agent-state, outbound to model APIs + GitHub + package registries

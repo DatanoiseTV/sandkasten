@@ -193,6 +193,13 @@ fn run(args: cli::Cli) -> Result<i32> {
             eprintln!("wrote {} (template: {template})", path.display());
             Ok(0)
         }
+        cli::Command::InstallProfiles {
+            system,
+            user,
+            force,
+            source,
+        } => install_profiles(system, user, force, source.as_deref()),
+
         cli::Command::Check { profile } => {
             let raw = config::load(&profile)?;
             let ctx = config::ExpandContext::detect(None)?;
@@ -648,18 +655,129 @@ fn list_profiles() {
     for (name, desc) in &templates::list() {
         println!("  {name:<16}  {desc}");
     }
-    if let Some(conf) = dirs::config_dir() {
-        let dir = conf.join("sandkasten").join("profiles");
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            println!("\nuser profiles in {}:", dir.display());
-            for e in entries.flatten() {
+    let mut dirs_to_show: Vec<PathBuf> = Vec::new();
+    if let Some(d) = config::user_profile_dir() {
+        dirs_to_show.push(d);
+    }
+    dirs_to_show.extend(config::system_profile_dirs());
+    for dir in dirs_to_show {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
                 let path = e.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        println!("  {stem}");
-                    }
+                if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                    return None;
                 }
-            }
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        names.sort();
+        println!("\nprofiles in {}:", dir.display());
+        for n in names {
+            println!("  {n}");
         }
     }
+}
+
+/// `sandkasten install-profiles [--system|--user] [--force] [-s <dir>]`.
+/// Copies the bundled example profiles (and optionally additional
+/// `.toml` files from a source dir) into the chosen profile dir so
+/// they can be referenced by bare name.
+fn install_profiles(
+    system: bool,
+    _user: bool, // explicit --user is the default; flag is just for scriptable clarity
+    force: bool,
+    source: Option<&std::path::Path>,
+) -> Result<i32> {
+    let dest = if system {
+        config::system_install_dir()
+    } else {
+        config::user_profile_dir()
+            .ok_or_else(|| anyhow!("can't determine per-user config dir on this system"))?
+    };
+    std::fs::create_dir_all(&dest).with_context(|| format!("creating {}", dest.display()))?;
+
+    // Bundled examples are compiled into the binary so install works
+    // even on a host that has only the prebuilt tarball, no source tree.
+    let mut planned: Vec<(String, Vec<u8>)> = templates::BUNDLED_EXAMPLES
+        .iter()
+        .map(|(name, body)| (format!("{name}.toml"), body.as_bytes().to_vec()))
+        .collect();
+
+    // Optional caller-supplied dir layered on top — files there with
+    // the same name override the bundled copy. Useful for organisations
+    // that ship a custom profile bundle.
+    if let Some(src) = source {
+        for entry in std::fs::read_dir(src)
+            .with_context(|| format!("reading source dir {}", src.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow!("non-utf8 filename in {}", src.display()))?
+                .to_string();
+            let body =
+                std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+            planned.retain(|(n, _)| n != &name);
+            planned.push((name, body));
+        }
+    }
+
+    if planned.is_empty() {
+        eprintln!("nothing to install");
+        return Ok(0);
+    }
+
+    let mut installed = 0usize;
+    let mut skipped = 0usize;
+    for (name, body) in &planned {
+        let target = dest.join(name);
+        if target.exists() && !force {
+            eprintln!(
+                "  skip   {} (already exists; pass --force to overwrite)",
+                target.display()
+            );
+            skipped += 1;
+            continue;
+        }
+        std::fs::write(&target, body).with_context(|| format!("writing {}", target.display()))?;
+        eprintln!("  write  {}", target.display());
+        installed += 1;
+    }
+
+    eprintln!(
+        "\ninstalled {installed} profile(s) to {}{}",
+        dest.display(),
+        if skipped > 0 {
+            format!(" ({skipped} skipped)")
+        } else {
+            String::new()
+        }
+    );
+    if system {
+        eprintln!(
+            "(system scope — readable by every user on this host; \
+             requires `sudo` if you ran into a permission error.)"
+        );
+    } else {
+        eprintln!(
+            "next step:  sandkasten run <profile-name> -- <command>\n\
+             e.g.        sandkasten run ai-agent -- claude"
+        );
+    }
+    Ok(0)
 }
