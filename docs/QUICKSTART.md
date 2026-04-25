@@ -59,7 +59,9 @@ sandkasten run network-client -- curl -sSf https://ipinfo.io/ip
 # Permissive dev sandbox — read /, write CWD+TMP, web+ssh+localhost:
 sandkasten run dev -- npm install
 
-# Browser, pairs with --no-sandbox so Chromium doesn't nest:
+# Browser. macOS currently REQUIRES --no-sandbox here (Chromium's own
+# inner sandbox can't initialise inside our outer Seatbelt — see the
+# README's browser section for the trade-off involved).
 sandkasten run browser -- "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --no-sandbox
 ```
 

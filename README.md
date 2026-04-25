@@ -358,10 +358,30 @@ Desktop, Documents), every Mach service the browser needs, and **hard
 denies** Keychains, SSH keys, cookies, shell history, Mail/Messages
 stores, and other browsers' profile directories.
 
-`--no-sandbox` is how you disable Chromium's own inner sandbox — our
-outer sandbox is the enforcement layer. `--password-store=basic`
-silences the "Encryption is not available" warning that appears when a
-browser can't reach the keychain (because we intentionally denied it).
+`--no-sandbox` disables Chromium's own per-renderer-process sandbox.
+On macOS this is currently **required** under sandkasten (without it,
+Chromium fails to initialise with "sandbox initialization failed:
+Operation not permitted" — our outer Seatbelt blocks the MAC-policy
+registration calls and helper-process Mach IPC Chromium needs to
+nest its own sandbox inside ours).
+
+That's a real trade-off worth understanding: Chromium's inner
+sandbox normally isolates renderers from each other (one tab can't
+read another tab's memory or files), and we lose that. A malicious
+site's renderer gets whatever FS scope our profile grants the parent
+process — by default that's a broad read so rendering and file
+pickers work. Treat the `browser` profile as protection from "what
+the browser process accidentally pokes at" (Keychains, SSH keys,
+cookies, shell history, other browsers' profiles), NOT as a
+replacement for Chromium's per-tab isolation.
+
+If your threat model needs per-tab isolation, use a separate macOS
+user account or a VM; sandkasten's outer Seatbelt-on-Chromium story
+is a coarser, all-or-nothing layer.
+
+`--password-store=basic` silences the "Encryption is not available"
+warning that appears when the browser can't reach the keychain
+(because we intentionally denied it).
 
 ### Jail SSH logins
 
@@ -771,7 +791,25 @@ sandkasten install-profiles -s ./my-org/profiles --user  # add a custom dir
 A profile is TOML. Everything is optional. `extends` inherits from a
 built-in template; list-valued fields concatenate, scalars prefer the
 child, and path variables (`${CWD}`, `${HOME}`, `${EXE_DIR}`, `~`, any
-env var) are expanded at run time.
+env var) are expanded at run time. To **narrow** an inherited field
+(replace it with the child's value rather than union with the parent),
+list its dotted path under top-level `clear`:
+
+```toml
+extends = "browser"
+clear   = [
+    "network.outbound_tcp",   # throw out parent's wide outbound list
+    "network.allow_dns",      # parent set true → child can now turn it off
+]
+
+[network]
+allow_dns    = false
+outbound_tcp = []             # actually empty, not unioned with parent
+```
+
+Without `clear`, a child can only widen — never narrow — its parent.
+Unknown paths in `clear` are a load-time error so typos don't silently
+no-op a security tightening.
 
 ```toml
 name        = "my-profile"

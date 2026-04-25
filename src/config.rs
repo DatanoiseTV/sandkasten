@@ -26,6 +26,29 @@ pub struct Profile {
     pub description: Option<String>,
     pub extends: Option<String>,
 
+    /// Reset specific parent-inherited fields before merging this
+    /// child on top. By default, `extends` UNIONs lists and ORs
+    /// boolean allow-flags, so a child can only widen — never narrow
+    /// — its parent. `clear` lets a child say "throw out the parent's
+    /// value of this field, treat it as if I'm starting from default
+    /// for this one knob".
+    ///
+    /// Field paths are dotted, e.g.:
+    /// ```toml
+    /// clear = [
+    ///   "network.outbound_tcp",
+    ///   "network.allow_dns",
+    ///   "filesystem.read",
+    /// ]
+    /// ```
+    ///
+    /// Listing a path that doesn't match a known field is a hard
+    /// error so typos surface at load time, not at run time.
+    ///
+    /// See `KNOWN_CLEAR_PATHS` for the supported set.
+    #[serde(default)]
+    pub clear: Vec<String>,
+
     #[serde(default)]
     pub filesystem: Filesystem,
     #[serde(default)]
@@ -824,11 +847,21 @@ impl Profile {
     }
 
     /// Merge a child profile over a parent (child wins on scalars, lists concatenate).
+    ///
+    /// If the child specifies any paths in its `clear` list, those
+    /// fields on the parent are reset to default BEFORE the child's
+    /// values are merged in. That's the only way a child can narrow
+    /// a parent's allow-set; without it, every list and bool flag
+    /// on the parent stays sticky.
     pub fn merge_over(mut self, parent: Profile) -> Profile {
         let mut out = parent;
+        for path in &self.clear {
+            clear_field(&mut out, path);
+        }
         out.name = self.name.take().or(out.name);
         out.description = self.description.take().or(out.description);
         out.extends = None;
+        out.clear = Vec::new();
 
         // Filesystem — concat lists, child scalars win
         out.filesystem.allow_metadata_read =
@@ -998,6 +1031,126 @@ impl Profile {
 
         out
     }
+}
+
+/// Reset one field on `p` to the type's default. Called from
+/// `merge_over` for each entry in the child's `clear` list, BEFORE
+/// the child's own values are folded in. Unknown paths are a no-op
+/// at this layer — typo-validation runs earlier in `validate_clear`.
+fn clear_field(p: &mut Profile, path: &str) {
+    match path {
+        // ── filesystem ──
+        "filesystem.read"             => p.filesystem.read.clear(),
+        "filesystem.read_write"       => p.filesystem.read_write.clear(),
+        "filesystem.deny"             => p.filesystem.deny.clear(),
+        "filesystem.read_files"       => p.filesystem.read_files.clear(),
+        "filesystem.read_write_files" => p.filesystem.read_write_files.clear(),
+        "filesystem.hide"             => p.filesystem.hide.clear(),
+        "filesystem.rules"            => p.filesystem.rules.clear(),
+        "filesystem.allow_metadata_read" => p.filesystem.allow_metadata_read = false,
+        // ── network ──
+        "network.outbound_tcp"      => p.network.outbound_tcp.clear(),
+        "network.outbound_udp"      => p.network.outbound_udp.clear(),
+        "network.inbound_tcp"       => p.network.inbound_tcp.clear(),
+        "network.inbound_udp"       => p.network.inbound_udp.clear(),
+        "network.allow_localhost"   => p.network.allow_localhost = false,
+        "network.allow_inbound"     => p.network.allow_inbound = false,
+        "network.allow_dns"         => p.network.allow_dns = false,
+        "network.allow_unix_sockets" => p.network.allow_unix_sockets = false,
+        "network.allow_icmp"        => p.network.allow_icmp = false,
+        "network.allow_icmpv6"      => p.network.allow_icmpv6 = false,
+        "network.allow_sctp"        => p.network.allow_sctp = false,
+        "network.allow_dccp"        => p.network.allow_dccp = false,
+        "network.allow_udplite"     => p.network.allow_udplite = false,
+        "network.allow_raw_sockets" => p.network.allow_raw_sockets = false,
+        "network.extra_protocols"   => p.network.extra_protocols.clear(),
+        "network.presets"           => p.network.presets.clear(),
+        // ── process ──
+        "process.allow_fork"   => p.process.allow_fork = false,
+        "process.allow_exec"   => p.process.allow_exec = false,
+        "process.allow_signal_self" => p.process.allow_signal_self = false,
+        // ── system ──
+        "system.mach_services"    => p.system.mach_services.clear(),
+        "system.allow_mach_all"   => p.system.allow_mach_all = false,
+        "system.allow_iokit"      => p.system.allow_iokit = false,
+        "system.allow_ipc"        => p.system.allow_ipc = false,
+        "system.allow_sysctl_read" => p.system.allow_sysctl_read = false,
+        // ── env ──
+        "env.pass"     => p.env.pass.clear(),
+        "env.pass_all" => p.env.pass_all = false,
+        // ── hardware ──
+        "hardware.usb"    => p.hardware.usb = false,
+        "hardware.serial" => p.hardware.serial = false,
+        "hardware.audio"  => p.hardware.audio = false,
+        "hardware.gpu"    => p.hardware.gpu = false,
+        "hardware.camera" => p.hardware.camera = false,
+        "hardware.screen_capture" => p.hardware.screen_capture = false,
+        // Unknown paths are caught earlier in validate_clear and
+        // turned into a load-time error. If we get here it means the
+        // caller skipped validation; do nothing rather than panic.
+        _ => {}
+    }
+}
+
+/// The full set of dotted field paths that `clear = [...]` accepts.
+/// Sorted for `sandkasten explain` / error-message stability.
+const KNOWN_CLEAR_PATHS: &[&str] = &[
+    "env.pass",
+    "env.pass_all",
+    "filesystem.allow_metadata_read",
+    "filesystem.deny",
+    "filesystem.hide",
+    "filesystem.read",
+    "filesystem.read_files",
+    "filesystem.read_write",
+    "filesystem.read_write_files",
+    "filesystem.rules",
+    "hardware.audio",
+    "hardware.camera",
+    "hardware.gpu",
+    "hardware.screen_capture",
+    "hardware.serial",
+    "hardware.usb",
+    "network.allow_dccp",
+    "network.allow_dns",
+    "network.allow_icmp",
+    "network.allow_icmpv6",
+    "network.allow_inbound",
+    "network.allow_localhost",
+    "network.allow_raw_sockets",
+    "network.allow_sctp",
+    "network.allow_udplite",
+    "network.allow_unix_sockets",
+    "network.extra_protocols",
+    "network.inbound_tcp",
+    "network.inbound_udp",
+    "network.outbound_tcp",
+    "network.outbound_udp",
+    "network.presets",
+    "process.allow_exec",
+    "process.allow_fork",
+    "process.allow_signal_self",
+    "system.allow_iokit",
+    "system.allow_ipc",
+    "system.allow_mach_all",
+    "system.allow_sysctl_read",
+    "system.mach_services",
+];
+
+/// Validate the `clear` list of a profile (called once per file at
+/// load time). Returns Err on the first unknown path so typos are
+/// caught before they silently no-op a security tightening.
+fn validate_clear(p: &Profile) -> Result<()> {
+    for path in &p.clear {
+        if !KNOWN_CLEAR_PATHS.contains(&path.as_str()) {
+            return Err(anyhow!(
+                "unknown field path in `clear`: {path:?}\n\
+                 known paths: {}",
+                KNOWN_CLEAR_PATHS.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Expand entries that look like shell globs (contain any of `*`, `?`, `[`)
@@ -1380,6 +1533,9 @@ pub fn load(name: &str) -> Result<Profile> {
 }
 
 fn merge_parents(mut p: Profile) -> Result<Profile> {
+    // Catch typos in `clear = [...]` paths at load time, before they
+    // silently no-op and leave a parent's wide allow rule in place.
+    validate_clear(&p)?;
     if let Some(parent_name) = p.extends.clone() {
         let parent = load(&parent_name)?;
         p = p.merge_over(parent);
@@ -1597,6 +1753,51 @@ mod tests {
         };
         let merged = child.merge_over(parent);
         assert_eq!(merged.filesystem.read, vec!["/a", "/b", "/c"]);
+    }
+
+    #[test]
+    fn clear_resets_parent_field_before_merge() {
+        // Parent grants wide outbound + DNS.
+        let parent = Profile {
+            network: Network {
+                allow_dns: true,
+                outbound_tcp: vec!["a:443".into(), "b:443".into()],
+                allow_localhost: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Child wants NONE of that, even though `extends` would
+        // normally union/OR everything additively.
+        let child = Profile {
+            clear: vec![
+                "network.outbound_tcp".into(),
+                "network.allow_dns".into(),
+                "network.allow_localhost".into(),
+            ],
+            network: Network {
+                allow_dns: false,
+                outbound_tcp: vec![],
+                allow_localhost: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let merged = child.merge_over(parent);
+        assert!(merged.network.outbound_tcp.is_empty());
+        assert!(!merged.network.allow_dns);
+        assert!(!merged.network.allow_localhost);
+        assert!(merged.clear.is_empty(), "clear list shouldn't survive merge");
+    }
+
+    #[test]
+    fn unknown_clear_path_is_a_load_time_error() {
+        let p = Profile {
+            clear: vec!["network.no_such_field".into()],
+            ..Default::default()
+        };
+        let err = validate_clear(&p).unwrap_err().to_string();
+        assert!(err.contains("network.no_such_field"));
     }
 
     #[test]
