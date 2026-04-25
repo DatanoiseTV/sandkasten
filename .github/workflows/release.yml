@@ -229,7 +229,7 @@ jobs:
       # records {who built it, what workflow, what commit, what
       # builder image} into the GitHub Attestation API. Verifiable
       # with `gh attestation verify <file> --owner DatanoiseTV`.
-      - uses: actions/attest-build-provenance@v1
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             release-files/*.tar.gz
