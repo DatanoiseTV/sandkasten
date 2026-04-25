@@ -401,6 +401,94 @@ final class ProfileStore: ObservableObject {
         statusLine = "Spawned interactive shell for \(entry.name)"
     }
 
+    /// Append a value to a TOML array key under `[<section>]` of the
+    /// named user profile, creating the section / key if missing.
+    /// Used by the denial-review UI's "Always Allow" / "Always Deny"
+    /// actions. Returns true on success. Built-in templates are
+    /// read-only — caller should resolve the user-visible name to the
+    /// matching user profile beforehand (we only ever patch user
+    /// profiles).
+    ///
+    /// We keep this as line-edit on `rawToml` rather than re-encoding
+    /// through `Profile.toTOML()` so user comments and key ordering
+    /// are preserved.
+    @discardableResult
+    func appendArrayEntry(profile: String, section: String, key: String, value: String) -> Bool {
+        let path = Self.profilesDir().appendingPathComponent("\(profile).toml")
+        guard FileManager.default.fileExists(atPath: path.path),
+              var src = try? String(contentsOf: path, encoding: .utf8)
+        else {
+            pendingError = "Profile not found: \(profile).toml"
+            return false
+        }
+
+        let header = "[\(section)]"
+        let escaped = "\"" + value.replacingOccurrences(of: "\\", with: "\\\\")
+                                  .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+
+        // Find the section. If absent, append a fresh one with the
+        // single key set to a one-element array.
+        guard let sectionRange = src.range(of: "^\\s*\\[\(NSRegularExpression.escapedPattern(for: section))\\]\\s*$",
+                                            options: [.regularExpression, .anchored]) ?? src.range(of: header)
+        else {
+            if !src.hasSuffix("\n") { src += "\n" }
+            src += "\n\(header)\n\(key) = [\(escaped)]\n"
+            return write(src, to: path, profile: profile)
+        }
+
+        // Find the next section header (or EOF) to bound our search.
+        let after = src.index(sectionRange.upperBound, offsetBy: 0)
+        let bounded: Substring = {
+            if let nextSec = src.range(of: "\n\\[", options: .regularExpression, range: after..<src.endIndex) {
+                return src[after..<nextSec.lowerBound]
+            }
+            return src[after..<src.endIndex]
+        }()
+
+        let keyPattern = "(?m)^\\s*\(NSRegularExpression.escapedPattern(for: key))\\s*=\\s*\\["
+        if let keyMatch = bounded.range(of: keyPattern, options: .regularExpression) {
+            // Existing array — append before the closing ']'.
+            let absolute = keyMatch
+            // Find the matching closing bracket from absolute.upperBound.
+            if let closeIdx = src.range(of: "]", range: absolute.upperBound..<src.endIndex) {
+                // Avoid duplicate insertions.
+                let arrayBody = src[absolute.upperBound..<closeIdx.lowerBound]
+                if arrayBody.contains(escaped) {
+                    statusLine = "\(value) already in [\(section)].\(key)"
+                    return true
+                }
+                let needsComma = !arrayBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let insertion = (needsComma ? ", " : "") + escaped
+                src.insert(contentsOf: insertion, at: closeIdx.lowerBound)
+                return write(src, to: path, profile: profile)
+            }
+        }
+
+        // Section exists but key doesn't — insert a new key right
+        // after the section header.
+        let insertion = "\n\(key) = [\(escaped)]"
+        src.insert(contentsOf: insertion, at: sectionRange.upperBound)
+        return write(src, to: path, profile: profile)
+    }
+
+    private func write(_ contents: String, to path: URL, profile: String) -> Bool {
+        do {
+            try contents.write(to: path, atomically: true, encoding: .utf8)
+            // If the patched profile is currently open, reload its raw
+            // text so the editor reflects the change.
+            if selectedEntry()?.kind == .user, selectedEntry()?.name == profile {
+                rawToml = contents
+                reparseFromRaw(context: profile)
+                refreshExplanation()
+            }
+            statusLine = "Patched \(profile).toml"
+            return true
+        } catch {
+            pendingError = "Patch failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     /// Opens the profile in the default editor (for users who prefer vim/Emacs).
     func openInEditor() {
         guard let entry = selectedEntry(), entry.kind == .user else { return }
