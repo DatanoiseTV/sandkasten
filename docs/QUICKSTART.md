@@ -194,7 +194,33 @@ And always-on (no flag): sandkasten unconditionally blocks
 `ioctl(_, TIOCSTI, …)` — the classic "inject characters into parent's
 controlling terminal" container-escape primitive.
 
-## 8. Using it in CI/CD
+## 8. Wrapping an AI coding agent
+
+Agentic CLI tools (Claude Code, opencode, aider, Continue, Cursor
+Agent, …) inherit your full shell environment by default — `~/.ssh`,
+`~/.aws`, `GITHUB_TOKEN`, cached sudo creds. A ready-made profile
+lives at [`examples/ai-agent.toml`](../examples/ai-agent.toml):
+
+```sh
+sandkasten run examples/ai-agent.toml -- claude
+sandkasten run examples/ai-agent.toml -- opencode
+
+# Or alias so the original name "just works":
+alias claude='sandkasten run ~/path/to/ai-agent.toml -- claude'
+```
+
+The profile gives the agent: read-anywhere, write-only-project +
+agent-state, outbound to model APIs + GitHub + package registries
+only, hard-denied `~/.ssh`/`~/.aws`/keychains/shell-history,
+`block_privilege_elevation` + `block_setid_syscalls` so even
+prompt-injected tool calls can't `sudo`, `env.pass` whitelisted to
+model API keys only (no `GITHUB_TOKEN` / `AWS_*` leakage). Every
+shell command the agent fork-execs inherits the same sandbox.
+
+See the README's [matching example](../README.md#sandbox-an-ai-coding-agent-claude-code-opencode-aider-) for the full breakdown of what the profile blocks
+and how to tighten it further (stricter outbound, narrower read scope).
+
+## 9. Using it in CI/CD
 
 See the [GitHub Actions and GitLab examples in the README](../README.md#isolate-a-cicd-step-github-actions-example)
 for a full wrap of `npm ci` / test runs under a hardened profile. TL;DR:
@@ -224,7 +250,7 @@ Gotchas on hosted runners:
   to sharing the host netns (still secure for FS/syscalls, just no
   per-IP network enforcement).
 
-## 9. Other useful subcommands
+## 10. Other useful subcommands
 
 ```sh
 sandkasten templates             # list built-ins

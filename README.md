@@ -185,6 +185,77 @@ Linux (Landlock exclusion + seccomp). The binary list covers standard
 `/usr/local/bin/...` for locally compiled installs — not just the
 macOS paths.
 
+### Sandbox an AI coding agent (Claude Code, opencode, aider, …)
+
+Agentic CLI tools run shell commands on your behalf — `npm install`,
+`git push`, `pytest`, `gh pr create`, sometimes things you didn't
+quite anticipate. By default they inherit your full shell
+environment: `~/.ssh`, `~/.aws`, `GITHUB_TOKEN`, the credential
+helpers behind `git push`, the cached `sudo` timestamp. A
+prompt-injected tool call or a compromised dependency can quietly
+walk off with any of those.
+
+Wrapping the agent in sandkasten gives it exactly what it needs and
+no more — and because sandbox restrictions inherit through `fork()`
++ `execve()` (verified earlier in this README's *Threat model*
+section), every shell command the agent kicks off lives inside the
+same sandbox automatically.
+
+A ready-made profile lives at [`examples/ai-agent.toml`](examples/ai-agent.toml):
+
+```sh
+# One-off launch:
+sandkasten run examples/ai-agent.toml -- claude
+sandkasten run examples/ai-agent.toml -- opencode
+sandkasten run examples/ai-agent.toml -- aider
+
+# Or alias it so the original command name "just works":
+alias claude='sandkasten run ~/path/to/ai-agent.toml -- claude'
+alias opencode='sandkasten run ~/path/to/ai-agent.toml -- opencode'
+```
+
+What the profile (`extends = "minimal-cli"`) actually does:
+
+- **Reads** anywhere — agents legitimately grep through deps, read
+  system headers, etc.
+- **Writes** only the project (`${CWD}`), the agent's own state
+  directory (`~/.config/claude`, `~/.claude`,
+  `~/Library/Application Support/Claude`, plus opencode/aider/…
+  equivalents), `~/.cache`, and `$TMPDIR`.
+- **Hard-denies** `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.docker`,
+  `~/.kube`, `~/.netrc`, `~/.password-store`, `~/.config/gcloud`,
+  shell history, macOS Keychains + TCC + Cookies + Mail + Messages,
+  Linux keyrings, KeePass.
+- **Outbound** restricted to a curated list of model APIs
+  (Anthropic, OpenAI, Gemini, OpenRouter, Mistral, Groq, Together,
+  DeepSeek, Cohere, Fireworks, Azure OpenAI), GitHub, and the major
+  package registries. On Linux this is enforced per-host via
+  nftables inside the pasta/slirp4netns netns. On macOS Seatbelt
+  widens specific hostnames to `*:443` (a documented kernel limit);
+  combine with `[network.proxy]` + mitmproxy / Squid for true
+  semantic filtering on macOS.
+- **`block_privilege_elevation`** — `sudo` / `su` / `doas` / `pkexec`
+  / `runuser` / `visudo` are denied at exec, even if the host user
+  has `NOPASSWD: ALL` or a still-cached password.
+- **`block_setid_syscalls`** — Linux seccomp denies the entire
+  setuid family so shellcode can't drop or gain creds without going
+  through a named elevation binary.
+- **`env.pass` whitelisted** — the agent sees its own model API
+  keys (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc.) but not
+  `GITHUB_TOKEN`, `AWS_*`, `KUBECONFIG`, `NPM_TOKEN`, `PYPI_TOKEN`.
+- **`[limits]`** — 30 min CPU, 4 GiB memory, 256 MiB file-size cap,
+  256 processes, 1 h wall-clock — sane backstops against a runaway
+  loop.
+
+If you want stricter network posture: drop everything from
+`outbound_tcp` except the model API actually in use; the agent will
+fail any package install, which is often what you want.
+
+If you want stricter filesystem posture: change `read = ["/"]` to a
+narrower list (typically `${CWD}`, `/usr/lib`, `/usr/share`,
+`/Library/Apple/System`, `/private/var/db/dyld`) so even the agent
+can't read other projects on your laptop.
+
 ### Sandbox a Chromium-family browser for a one-off session
 
 ```sh
