@@ -1153,21 +1153,75 @@ fn validate_clear(p: &Profile) -> Result<()> {
     Ok(())
 }
 
+/// Cap glob expansion to defend against patterns that would
+/// otherwise produce huge result sets and bloat the rendered
+/// policy. Above the largest legitimate use we've seen.
+const MAX_GLOB_MATCHES: usize = 4096;
+
+/// Decide if a glob pattern would force the underlying walker to
+/// traverse the entire (or most of the) host filesystem. We reject
+/// these statically because `glob::glob("/**")` still scans every
+/// inode under `/` even if we cap the result count — the walker has
+/// to find the matches before it can hand them to us. Returns true
+/// for patterns whose first non-empty path segment is itself a
+/// recursive wildcard (`/**`, `/*/**`, `/?**`, `**` etc.).
+fn is_dangerously_broad_glob(p: &str) -> bool {
+    let stripped = p.strip_prefix('/').unwrap_or(p);
+    let first = stripped.split('/').next().unwrap_or("");
+    // `**` alone — recursive walk from / (or relative cwd).
+    // `*` alone at root — every file/dir at /, then we'd iterate.
+    // `?` alone is one char anywhere, fine.
+    matches!(first, "**" | "*")
+        // Also: starts with `**` followed by anything.
+        || first.starts_with("**")
+}
+
 /// Expand entries that look like shell globs (contain any of `*`, `?`, `[`)
 /// into the concrete paths they match on the host filesystem. Non-glob
 /// entries are left untouched. De-duplicates.
+///
+/// Each glob's match count is capped at `MAX_GLOB_MATCHES`. If the
+/// cap fires we emit a warning and keep what we already collected;
+/// the user almost certainly didn't intend a recursive whole-disk
+/// walk and the rest of the filesystem stays default-deny anyway.
 fn expand_globs_in_place(v: &mut Vec<String>) {
     let mut out: Vec<String> = Vec::with_capacity(v.len());
     for p in v.drain(..) {
         if p.contains('*') || p.contains('?') || p.contains('[') {
+            // Reject patterns that ask for a recursive whole-tree
+            // walk before touching the filesystem at all. `glob`
+            // would otherwise traverse the entire host disk to
+            // produce its first match — DoS surface for any tool
+            // (render / explain / verify) that finalises the
+            // profile. Found by the profile_parse fuzz target.
+            if is_dangerously_broad_glob(&p) {
+                eprintln!(
+                    "sandkasten ⚠ glob {p:?} would walk the whole filesystem — kept literally. \
+                     If you really want a wide read, list specific dirs (`/usr`, `/etc`) instead."
+                );
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+                continue;
+            }
             match glob::glob(&p) {
                 Ok(iter) => {
                     let before = out.len();
+                    let mut matched_this_glob = 0usize;
                     for entry in iter.flatten() {
+                        if matched_this_glob >= MAX_GLOB_MATCHES {
+                            eprintln!(
+                                "sandkasten ⚠ glob {p:?} matched > {MAX_GLOB_MATCHES} paths — \
+                                 truncating. If you really wanted recursive whole-tree \
+                                 expansion, list the parent directory directly instead."
+                            );
+                            break;
+                        }
                         let s = entry.to_string_lossy().into_owned();
                         if !out.contains(&s) {
                             out.push(s);
                         }
+                        matched_this_glob += 1;
                     }
                     if out.len() == before {
                         eprintln!(
@@ -1788,6 +1842,49 @@ mod tests {
         assert!(!merged.network.allow_dns);
         assert!(!merged.network.allow_localhost);
         assert!(merged.clear.is_empty(), "clear list shouldn't survive merge");
+    }
+
+    #[test]
+    fn rejects_dangerously_broad_globs_statically() {
+        // Explicit rejection list — these would otherwise walk the
+        // whole host filesystem and DoS the loader.
+        for p in ["/**", "/*", "**", "**/anything", "/**/passwords"] {
+            assert!(
+                is_dangerously_broad_glob(p),
+                "expected {p:?} to be rejected"
+            );
+        }
+        // Specific-prefix patterns are fine — the walker only enters
+        // the named subtree.
+        for p in ["/etc/*", "/usr/lib/lib*.dylib", "/Users/*/.config"] {
+            assert!(
+                !is_dangerously_broad_glob(p),
+                "expected {p:?} to be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn broad_glob_in_profile_does_not_hang_finalize() {
+        // The exact attack shape libFuzzer surfaced. Without the
+        // static pre-check, `expand_paths` walks the entire host
+        // filesystem here.
+        let toml = r#"
+            name = "fuzz-repro"
+            [filesystem]
+            read = ["/**", "/etc/hosts"]
+        "#;
+        let raw = Profile::from_toml_str(toml).unwrap();
+        let start = std::time::Instant::now();
+        let out = finalize(raw, &ctx()).unwrap();
+        // Should return promptly — the broad glob is rejected
+        // statically, the literal `/etc/hosts` survives.
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(500),
+            "finalize took {:?}, glob rejection regressed",
+            start.elapsed()
+        );
+        assert!(out.filesystem.read.iter().any(|p| p == "/etc/hosts"));
     }
 
     #[test]
