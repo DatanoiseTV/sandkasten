@@ -219,7 +219,7 @@ fn run(args: cli::Cli) -> Result<i32> {
             Ok(0)
         }
         cli::Command::Templates => {
-            for (name, desc) in templates::LIST {
+            for (name, desc) in &templates::list() {
                 println!("  {name:<16}  {desc}");
             }
             Ok(0)
@@ -606,7 +606,7 @@ fn print_info() {
     }
     println!();
     println!("built-in templates:");
-    for (name, desc) in templates::LIST {
+    for (name, desc) in &templates::list() {
         println!("  {name:<16}  {desc}");
     }
     if let Some(c) = conf {
@@ -645,7 +645,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 fn list_profiles() {
     println!("built-in templates:");
-    for (name, desc) in templates::LIST {
+    for (name, desc) in &templates::list() {
         println!("  {name:<16}  {desc}");
     }
     if let Some(conf) = dirs::config_dir() {

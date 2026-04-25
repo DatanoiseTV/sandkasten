@@ -95,7 +95,7 @@ fn handle(state: &AppState, mut req: tiny_http::Request) -> Result<()> {
                 Err(()) => return Ok(()),
             };
             let mut body = String::from("[");
-            for (i, (name, desc)) in crate::templates::LIST.iter().enumerate() {
+            for (i, (name, desc)) in crate::templates::list().into_iter().enumerate() {
                 if i > 0 {
                     body.push(',');
                 }

@@ -9,36 +9,52 @@ pub const MINIMAL_CLI: &str = include_str!("../templates/minimal-cli.toml");
 pub const BROWSER: &str = include_str!("../templates/browser.toml");
 pub const ELECTRON: &str = include_str!("../templates/electron.toml");
 
-pub const LIST: &[(&str, &str)] = &[
-    (
-        "self",
-        "Default. Sandbox sees only its own working directory (${CWD}). No network.",
-    ),
-    (
-        "strict",
-        "Near-zero permissions. Minimal base every CLI needs to start.",
-    ),
-    (
-        "minimal-cli",
-        "Read /usr /System + /etc/hosts. No network, no writes.",
-    ),
-    (
-        "network-client",
-        "Outbound HTTPS + DNS only. Read-only filesystem.",
-    ),
-    (
-        "dev",
-        "Permissive development sandbox. Writes to CWD + TMPDIR, localhost.",
-    ),
-    (
-        "browser",
-        "Chromium-family browsers. Use with --no-sandbox flag.",
-    ),
-    (
-        "electron",
-        "Electron apps (VS Code, Slack, Discord, Obsidian, …).",
-    ),
+/// Names of the built-in templates, in the order they appear in the
+/// CLI / web-UI listings.
+const NAMES: &[&str] = &[
+    "self",
+    "strict",
+    "minimal-cli",
+    "network-client",
+    "dev",
+    "browser",
+    "electron",
 ];
+
+/// `(name, short_description)` for each built-in. The description is
+/// derived from the embedded TOML's `description = "..."` line at run
+/// time so the CLI / web UI / `templates` listing can never drift out
+/// of sync with the actual TOML — they share a single source of truth.
+pub fn list() -> Vec<(&'static str, &'static str)> {
+    NAMES
+        .iter()
+        .filter_map(|n| builtin(n).map(|toml| (*n, extract_description(toml))))
+        .collect()
+}
+
+/// Pull the first `description = "..."` value out of a TOML body.
+/// Cheap line scan rather than full TOML parse — these files are
+/// authored by hand, the description is always on its own line near
+/// the top, and we'd rather not pay an allocation/parse round here
+/// just to fill a CLI table.
+fn extract_description(toml: &'static str) -> &'static str {
+    for line in toml.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("description") {
+            // Match `description = "..."` (any spaces, double-quoted).
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('"') {
+                    if let Some(end) = rest.find('"') {
+                        return &rest[..end];
+                    }
+                }
+            }
+        }
+    }
+    "(no description)"
+}
 
 pub fn builtin(name: &str) -> Option<&'static str> {
     match name {
@@ -50,5 +66,36 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         "browser" => Some(BROWSER),
         "electron" => Some(ELECTRON),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn description_matches_toml_for_every_template() {
+        // No template should still be carrying a placeholder. Equally,
+        // the description has to actually render to non-empty so the
+        // CLI table doesn't grow blank rows.
+        for (name, desc) in list() {
+            assert!(!desc.is_empty(), "template {name} has empty description");
+            assert_ne!(
+                desc, "(no description)",
+                "template {name} missing `description = ...`"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_description_handles_typical_toml() {
+        let toml = "name = \"x\"\ndescription = \"hello world\"\nextends = \"y\"\n";
+        assert_eq!(extract_description(toml), "hello world");
+    }
+
+    #[test]
+    fn extract_description_skips_first_unrelated_line() {
+        let toml = "# comment\nname = \"x\"\n# another comment\ndescription = \"good\"\n";
+        assert_eq!(extract_description(toml), "good");
     }
 }
